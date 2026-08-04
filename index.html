@@ -837,7 +837,8 @@ var DEFAULT_CHECKLISTS = {
 
 var ACTIVITY_TYPES = {
   sightseeing:{icon:'🏛️',label:'景点'},food:{icon:'🍽️',label:'餐饮'},transport:{icon:'🚗',label:'交通'},
-  shopping:{icon:'🛍️',label:'购物'},entertainment:{icon:'🎉',label:'娱乐'},ticket:{icon:'🎫',label:'门票'},other:{icon:'📸',label:'其他'}
+  hotel:{icon:'🏨',label:'住宿'},shopping:{icon:'🛍️',label:'购物'},entertainment:{icon:'🎉',label:'娱乐'},
+  ticket:{icon:'🎫',label:'门票'},other:{icon:'📸',label:'其他'}
 };
 
 var TRANSPORT_TYPES = {
@@ -1389,14 +1390,10 @@ function saveTripFromWishlist(wishlistId){
 
     // Build summary of what was extracted
     var dayCount=Object.keys(newTrip.itinerary||{}).length;
-    var transCount=(newTrip.transports||[]).length;
-    var hasHotel=newTrip.hotel&&newTrip.hotel.name;
+    var totalActs=0;
+    Object.keys(newTrip.itinerary||{}).forEach(function(k){totalActs+=newTrip.itinerary[k].length});
     var summary='✈️ 行程已生成！';
-    var parts=[];
-    if(dayCount>0)parts.push(dayCount+'天日程');
-    if(transCount>0)parts.push(transCount+'条交通');
-    if(hasHotel)parts.push('住宿信息');
-    if(parts.length>0)summary+='提取了'+parts.join('、');
+    if(dayCount>0)summary+='提取了'+dayCount+'天日程、共'+totalActs+'条活动';
     
     state.trips.push(newTrip);
     saveState();closeModal();
@@ -1433,8 +1430,6 @@ function parseGuideToItinerary(trip,content){
   var lines=content.split('\n');
   var dayActivities={}; // {1:[],2:[],...}
   var currentDay=0;
-  var hotelFound=false;
-  var transportCount=0;
 
   for(var i=0;i<lines.length;i++){
     var raw=lines[i].trim();
@@ -1450,28 +1445,20 @@ function parseGuideToItinerary(trip,content){
     if(line.match(/^@\S+\s*$/))continue;
 
     // 1. Check for day marker: Day1, Day 1, D1, 第一天, day1
-    var dayMatch=line.match(/^(?:Day\s*|第|D|day\s*)(\d+|[一二三四五六七八九十]+)(?:天|日)?[\s:：、，,\-\.→]*/i);
+    //    Allow emoji/decorative prefix before the day marker (e.g. "📍 Day 4｜...")
+    //    Also handle full-width pipe ｜ and regular pipe | after day number
+    var stripped=line.replace(/^[^\u4e00-\u9fa5a-zA-Z0-9]+/,''); // strip leading emojis/symbols
+    var dayMatch=stripped.match(/^(?:Day\s*|第|D|day\s*)(\d+|[一二三四五六七八九十]+)(?:天|日)?[\s:：、，,\-\.→｜|]*/i);
     if(dayMatch){
       currentDay=parseDayNumber(dayMatch[1]);
       if(!dayActivities[currentDay])dayActivities[currentDay]=[];
-      var rest=line.substring(dayMatch[0].length).trim();
+      var rest=stripped.substring(dayMatch[0].length).trim();
       if(rest)classifyAndAddActivity(dayActivities,currentDay,rest);
       continue;
     }
 
-    // 2. Check for hotel/accommodation
-    if(/住宿|酒店|民宿|旅馆|客栈|公寓|宾馆|青旅/.test(line)){
-      hotelFound=parseHotelFromLine(line,trip)||hotelFound;
-      continue;
-    }
-
-    // 3. Check for transport
-    if(parseTransportFromLine(line,trip)){
-      transportCount++;
-      continue;
-    }
-
-    // 4. If inside a day, add as activity
+    // 2. All other lines go into the current day as activities
+    //    (hotel, transport, tickets, food, sightseeing — all merged into daily itinerary)
     if(currentDay>0){
       if(!dayActivities[currentDay])dayActivities[currentDay]=[];
       classifyAndAddActivity(dayActivities,currentDay,line);
@@ -1510,9 +1497,13 @@ function classifyAndAddActivity(dayActivities,day,line){
     cost=parseFloat(costMatch[1]||costMatch[2]);
     title=title.replace(costMatch[0],'').trim();
   }
-  // Classify activity type
+  // Classify activity type — all types go into the daily itinerary
   var type='sightseeing';
-  if(/门票|票价|入场|预约.*票|景区.*票|购票|套票|索道/.test(title)){
+  if(/住宿|酒店|民宿|旅馆|客栈|公寓|宾馆|青旅|入住|住在?/.test(title)){
+    type='hotel';
+  }else if(/飞机|航班|机票|✈️|航空|飞往|机场|高铁|火车|动车|城轨|🚄|🚆|大巴|巴士|公交|🚌|客车|自驾|租车|网约车|出租车|滴滴|打车|🚗|轮船|游轮|渡轮|🚢/.test(title)){
+    type='transport';
+  }else if(/门票|票价|入场|预约.*票|景区.*票|购票|套票|索道/.test(title)){
     type='ticket';
   }else if(/早餐|午餐|晚餐|吃饭|美食|餐厅|小吃|美食街|夜市|觅食|午饭|早饭|晚饭|探店|奶茶|咖啡|下午茶/.test(title)){
     type='food';
@@ -1523,59 +1514,6 @@ function classifyAndAddActivity(dayActivities,day,line){
   }
   if(!title||title.length<1)return;
   dayActivities[day].push({id:genId('act'),type:type,title:title,time:time,cost:cost,desc:''});
-}
-
-function parseHotelFromLine(line,trip){
-  if(!trip.hotel)trip.hotel={name:'',address:'',checkIn:trip.startDate||'',checkOut:trip.endDate||'',pricePerNight:0,bookingNo:''};
-  // Extract hotel name
-  var nameMatch=line.match(/(?:入住|住在?|住宿[:：]?)\s*(?:在\s*)?([^\s,，。；;（(\d]+)/);
-  if(nameMatch&&nameMatch[1].length>1){
-    trip.hotel.name=nameMatch[1].trim();
-  }else{
-    var hotelMatch=line.match(/([\u4e00-\u9fa5a-zA-Z0-9]{2,})\s*(酒店|民宿|旅馆|客栈|公寓|宾馆)/);
-    if(hotelMatch)trip.hotel.name=hotelMatch[1]+hotelMatch[2];
-  }
-  // Extract price
-  var priceMatch=line.match(/[¥￥]\s*(\d+)\s*[\/每]?\s*(?:晚|夜|天)?/);
-  if(priceMatch){
-    trip.hotel.pricePerNight=parseInt(priceMatch[1]);
-  }else{
-    var pm2=line.match(/(\d+)\s*[元块]?\s*[\/每]?\s*(?:晚|夜|天)/);
-    if(pm2)trip.hotel.pricePerNight=parseInt(pm2[1]);
-  }
-  // Extract address
-  var addrMatch=line.match(/(?:地址|位置|位于|在)\s*[:：]?\s*([^\s,，。；;（(]+)/);
-  if(addrMatch)trip.hotel.address=addrMatch[1].trim();
-  return true;
-}
-
-function parseTransportFromLine(line,trip){
-  var type=null;
-  if(/飞机|航班|机票|✈️|航空|飞往|机场/.test(line))type='flight';
-  else if(/高铁|火车|动车|城轨|🚄|🚆|G\d{1,4}|D\d{1,4}|K\d{1,4}|T\d{1,4}/.test(line))type='train';
-  else if(/大巴|巴士|公交|🚌|客车/.test(line))type='bus';
-  else if(/自驾|租车|网约车|出租车|滴滴|打车|🚗/.test(line))type='car';
-  else if(/轮船|游轮|渡轮|ferry|🚢/.test(line))type='ship';
-  if(!type)return false;
-  if(!trip.transports)trip.transports=[];
-  var transport={id:genId('tr'),type:type,from:'',to:'',date:trip.startDate||'',time:'',number:'',price:0};
-  // Extract route: A→B, A到B, A-B, A至B
-  var routeMatch=line.match(/([^\s,，。；;（(\d→\-]{2,})\s*(?:→|到|至|->|-)\s*([^\s,，。；;（(\d]{2,})/);
-  if(routeMatch){
-    transport.from=routeMatch[1].replace(/^从/,'').trim();
-    transport.to=routeMatch[2].trim();
-  }
-  // Extract time
-  var timeMatch=line.match(/(\d{1,2}[:：]\d{2})/);
-  if(timeMatch)transport.time=timeMatch[1].replace('：',':');
-  // Extract flight/train number
-  var numMatch=line.match(/([A-Z]{1,3}\d{2,5})/);
-  if(numMatch)transport.number=numMatch[1];
-  // Extract price
-  var priceMatch=line.match(/[¥￥]\s*(\d+)|(\d+)\s*[元块]/);
-  if(priceMatch)transport.price=parseInt(priceMatch[1]||priceMatch[2]);
-  trip.transports.push(transport);
-  return true;
 }
 
 function parseDayNumber(s){

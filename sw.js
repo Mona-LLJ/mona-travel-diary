@@ -1,6 +1,6 @@
 // Mona Travel Diary - Service Worker
 // Caches app shell for offline use
-const CACHE_NAME = 'mona-travel-diary-v6';
+const CACHE_NAME = 'mona-travel-diary-v7';
 const CACHE_URLS = [
   './',
   './index.html',
