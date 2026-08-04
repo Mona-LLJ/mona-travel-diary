@@ -1084,7 +1084,7 @@ function renderHome(){
         html+='<div class="wishlist-guide"><div class="wishlist-guide-tag">📕 攻略笔记</div>'+escapeHtml(w.guide)+'</div>';
       }
       html+='<div class="wishlist-actions">';
-      html+='<a class="wishlist-link" href="'+link+'" target="_blank" rel="noopener">📕 查看攻略</a>';
+      html+='<a class="wishlist-link" href="'+link+'" target="_blank" rel="noopener" onclick="window.open(\''+link.replace(/'/g,"\\'")+'\',\'_blank\');return false;">📕 查看攻略</a>';
       html+='<button class="wishlist-btn edit" onclick="editWishlist(\''+w.id+'\')">✏️ 编辑笔记</button>';
       html+='<button class="wishlist-btn generate" onclick="generateTripFromWishlist(\''+w.id+'\')">📋 生成行程</button>';
       html+='</div>';
@@ -1183,7 +1183,7 @@ function editWishlist(id){
   var html='<div class="form-group"><label>地点名称</label><input type="text" id="wl-edit-name" class="form-input" value="'+escapeHtml(w.name)+'"></div>';
   html+='<div class="form-group"><label>📕 攻略笔记</label>';
   html+='<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">从小红书攻略中摘抄或自行编写旅行要点，生成行程时会自动填入</div>';
-  html+='<a href="'+link+'" target="_blank" rel="noopener" style="display:inline-block;font-size:11px;color:#FF6B6B;margin-bottom:8px;text-decoration:none">📕 点此查看小红书「'+escapeHtml(w.name)+'」攻略 →</a>';
+  html+='<a href="'+link+'" target="_blank" rel="noopener" onclick="window.open(\''+link.replace(/'/g,"\\'")+'\',\'_blank\');return false;" style="display:inline-block;font-size:11px;color:#FF6B6B;margin-bottom:8px;text-decoration:none">📕 点此查看小红书「'+escapeHtml(w.name)+'」攻略 →</a>';
   html+='<textarea id="wl-edit-guide" class="form-input" style="min-height:160px;line-height:1.6" placeholder="在此粘贴或编写攻略笔记...\n\n例如：\nDay1：抵达后先去XX景点，门票XX元，建议下午去看日落\nDay2：早上前往XX，中午品尝当地XX美食，下午逛XX老街\nDay3：XX公园 → XX博物馆 → 返程\n\n必吃美食：XX、XX\n注意事项：XX\n\n参考来源：小红书@XX的攻略笔记">'+escapeHtml(w.guide||'')+'</textarea></div>';
   html+='<div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveWishlistEdit(\''+id+'\')">保存</button></div>';
   showModal('✏️ 编辑攻略笔记',html);
