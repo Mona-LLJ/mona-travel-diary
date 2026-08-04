@@ -855,7 +855,7 @@ var AVATARS = ['🐱','🐰','🦊','🐻','🐼','🐨','🦉','🦋','🌸','�
 // ==================== STATE ====================
 var state = {
   profile:{name:'Mona',avatar:'🐱',avatarType:'emoji',avatarImg:null,bgPreset:'forest',bgImage:null,bgOpacity:0.85,deviceId:null,deviceName:null,createdAt:null},
-  trips:[],checklists:{},notes:{},footprints:[],wishlist:[],settings:{lastSync:null,github:{token:'',owner:'',repo:'mona-travel-data',branch:'main',path:'data/mona-data.enc.json',password:'',autoSync:false,lastCloudSync:null,connected:false}}
+  trips:[],checklists:{},notes:{},footprints:[],wishlist:[],settings:{lastSync:null,github:{token:'',owner:'',repo:'literate-palm-tree',branch:'main',path:'data/mona-data.enc.json',password:'',autoSync:false,lastCloudSync:null,connected:false}}
 };
 var currentView = {tab:'home',tripDetail:null,checklistDetail:null,calYear:0,calMonth:0,selectedDate:null};
 var map = null, mapInitialized = false;
@@ -2090,7 +2090,10 @@ function renderProfile(){
   html+='</div>';
   html+='<button class="sync-btn sync-btn-secondary" onclick="showGitHubSettings()" style="margin-top:8px">⚙️ 配置 GitHub 同步</button>';
   if (ghConnected) {
-    html+='<button class="sync-btn sync-btn-primary" onclick="syncToGitHub()">☁️ 立即同步</button>';
+    html+='<div style="display:flex;gap:8px;margin-top:8px">';
+    html+='<button class="sync-btn sync-btn-primary" style="flex:1" onclick="syncToGitHub()">☁️ 上传同步</button>';
+    html+='<button class="sync-btn sync-btn-secondary" style="flex:1" onclick="syncFromGitHub()">📥 恢复数据</button>';
+    html+='</div>';
   }
   html+='</div>';
 
@@ -2348,8 +2351,13 @@ async function encryptData(plaintext, password) {
   combined.set(salt, 0);
   combined.set(iv, salt.length);
   combined.set(new Uint8Array(encrypted), salt.length + iv.length);
-  // Base64 encode
-  return btoa(String.fromCharCode.apply(null, combined));
+  // Base64 encode (chunked to avoid call stack overflow on large data)
+  var binary = '';
+  var chunkSize = 8192;
+  for (var i = 0; i < combined.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, combined.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 async function decryptData(b64Data, password) {
@@ -2386,7 +2394,7 @@ function getGhSettings() {
   return {
     token: gh.token || '',
     owner: gh.owner || '',
-    repo: gh.repo || 'mona-travel-data',
+    repo: gh.repo || 'literate-palm-tree',
     branch: gh.branch || 'main',
     path: gh.path || 'data/mona-data.enc.json',
     password: gh.password || '',
@@ -2406,7 +2414,8 @@ async function syncToGitHub() {
     // Serialize and encrypt data
     var dataStr = JSON.stringify(state);
     var encrypted = await encryptData(dataStr, cfg.password);
-    var content = btoa(unescape(encodeURIComponent(encrypted)));
+    // encryptData already returns base64, use directly for GitHub API
+    var content = encrypted;
 
     // Check if file exists (get SHA for update)
     var existing = null;
@@ -2453,8 +2462,8 @@ async function syncFromGitHub() {
       return;
     }
 
-    // Decode and decrypt
-    var encrypted = decodeURIComponent(escape(atob(file.content.replace(/\n/g, ''))));
+    // Decode and decrypt (file.content is base64 from GitHub API = encrypted base64)
+    var encrypted = file.content.replace(/\n/g, '');
     var decrypted = await decryptData(encrypted, cfg.password);
     var data = JSON.parse(decrypted);
 
@@ -2527,7 +2536,7 @@ function showGitHubSettings() {
 
   html += '<div class="github-form-group"><label>Personal Access Token</label><input type="password" id="gh-token" placeholder="ghp_xxxxxxxxxxxx" value="'+escapeHtml(cfg.token)+'"><div class="hint">需要 repo 权限。Token 仅存储在本设备，不会上传到任何服务器。<br>👉 生成方式: GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token → 勾选 repo</div></div>';
 
-  html += '<div class="github-form-group"><label>仓库名称</label><input type="text" id="gh-repo" placeholder="mona-travel-data" value="'+escapeHtml(cfg.repo)+'"><div class="hint">建议创建为 <strong>私有仓库(Private)</strong>，确保数据私密性</div></div>';
+  html += '<div class="github-form-group"><label>仓库名称</label><input type="text" id="gh-repo" placeholder="literate-palm-tree" value="'+escapeHtml(cfg.repo)+'"><div class="hint">建议创建为 <strong>私有仓库(Private)</strong>，确保数据私密性</div></div>';
 
   html += '<div class="github-form-group"><label>加密密码</label><input type="password" id="gh-password" placeholder="设置加密密码" value="'+escapeHtml(cfg.password)+'"><div class="hint">数据在上传前会使用此密码进行 AES-256 加密。请牢记密码，丢失密码将无法解密数据！</div></div>';
 
@@ -2551,7 +2560,7 @@ function saveGitHubSettings() {
   var cfg = {
     token: document.getElementById('gh-token').value.trim(),
     owner: document.getElementById('gh-owner').value.trim(),
-    repo: document.getElementById('gh-repo').value.trim() || 'mona-travel-data',
+    repo: document.getElementById('gh-repo').value.trim() || 'literate-palm-tree',
     branch: document.getElementById('gh-branch').value.trim() || 'main',
     path: 'data/mona-data.enc.json',
     password: document.getElementById('gh-password').value,
