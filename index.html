@@ -60,7 +60,7 @@ background-size:cover;background-repeat:no-repeat;
 }
 /* Global user-customizable background layer */
 .app-global-bg{
-position:absolute;inset:0;z-index:0;pointer-events:none;
+position:absolute;inset:0;z-index:1;pointer-events:none;
 background:linear-gradient(135deg,rgba(67,160,71,.85) 0%,rgba(46,125,50,.75) 100%);
 background-size:cover;background-position:center;
 opacity:0;transition:opacity .4s;
@@ -132,7 +132,7 @@ padding:4px 10px 4px 8px;border-radius:14px;font-size:11px;font-weight:600;trans
 @keyframes pulseOrange{0%,100%{opacity:1}50%{opacity:.4}}
 
 /* ===== CONTENT ===== */
-.content-area{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;position:relative;z-index:1}
+.content-area{flex:1;overflow-y:auto;overflow-x:hidden;-webkit-overflow-scrolling:touch;position:relative;z-index:2}
 .tab-content{display:none;padding:16px;padding-bottom:90px}
 .tab-content.active{display:block;animation:fadeIn .35s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
@@ -508,6 +508,12 @@ transition:all .2s;position:relative;overflow:hidden;
 }
 .bg-preset.active{border-color:var(--primary-mid);transform:scale(.92)}
 .bg-preset.upload{display:flex;align-items:center;justify-content:center;font-size:24px;background:rgba(255,255,255,.5);border:2px dashed var(--primary-light)}
+/* Theme color presets */
+.theme-preset{
+aspect-ratio:1;border-radius:10px;cursor:pointer;border:3px solid transparent;
+transition:all .2s;position:relative;overflow:hidden;
+}
+.theme-preset.active{border-color:var(--primary-mid);transform:scale(.92)}
 /* Opacity slider */
 .opacity-slider-wrap{display:flex;align-items:center;gap:10px;margin-top:6px}
 .opacity-slider-wrap input[type=range]{
@@ -852,9 +858,20 @@ var PROFILE_BGS = [
 
 var AVATARS = ['🐱','🐰','🦊','🐻','🐼','🐨','🦉','🦋','🌸','🍀','🌟','🐚'];
 
+var THEME_PRESETS = [
+  {id:'green',name:'森林绿',primary:'#2E7D32',primaryMid:'#43A047',primaryLight:'#66BB6A',primaryLighter:'#A5D6A7',primaryLightest:'#E8F5E9',bg:'#F1F8E9',text:'#1B5E20',border:'#C8E6C9'},
+  {id:'blue',name:'海洋蓝',primary:'#1565C0',primaryMid:'#1976D2',primaryLight:'#42A5F5',primaryLighter:'#90CAF9',primaryLightest:'#E3F2FD',bg:'#E3F2FD',text:'#0D47A1',border:'#BBDEFB'},
+  {id:'purple',name:'薰衣草',primary:'#6A1B9A',primaryMid:'#7B1FA2',primaryLight:'#AB47BC',primaryLighter:'#CE93D8',primaryLightest:'#F3E5F5',bg:'#F3E5F5',text:'#4A148C',border:'#E1BEE7'},
+  {id:'pink',name:'玫瑰粉',primary:'#AD1457',primaryMid:'#C2185B',primaryLight:'#EC407A',primaryLighter:'#F48FB1',primaryLightest:'#FCE4EC',bg:'#FCE4EC',text:'#880E4F',border:'#F8BBD0'},
+  {id:'orange',name:'暖阳橙',primary:'#E65100',primaryMid:'#EF6C00',primaryLight:'#FB8C00',primaryLighter:'#FFB74D',primaryLightest:'#FFF3E0',bg:'#FFF3E0',text:'#BF360C',border:'#FFE0B2'},
+  {id:'teal',name:'青松色',primary:'#00695C',primaryMid:'#00796B',primaryLight:'#26A69A',primaryLighter:'#80CBC4',primaryLightest:'#E0F2F1',bg:'#E0F2F1',text:'#004D40',border:'#B2DFDB'},
+  {id:'indigo',name:'靛蓝',primary:'#283593',primaryMid:'#303F9F',primaryLight:'#5C6BC0',primaryLighter:'#9FA8DA',primaryLightest:'#E8EAF6',bg:'#E8EAF6',text:'#1A237E',border:'#C5CAE9'},
+  {id:'brown',name:'大地棕',primary:'#5D4037',primaryMid:'#6D4C41',primaryLight:'#8D6E63',primaryLighter:'#BCAAA4',primaryLightest:'#EFEBE9',bg:'#EFEBE9',text:'#3E2723',border:'#D7CCC8'}
+];
+
 // ==================== STATE ====================
 var state = {
-  profile:{name:'Mona',avatar:'🐱',avatarType:'emoji',avatarImg:null,bgPreset:'forest',bgImage:null,bgOpacity:0.85,deviceId:null,deviceName:null,createdAt:null},
+  profile:{name:'Mona',avatar:'🐱',avatarType:'emoji',avatarImg:null,bgPreset:'forest',bgImage:null,bgOpacity:0.85,themeColor:'green',deviceId:null,deviceName:null,createdAt:null},
   trips:[],checklists:{},notes:{},footprints:[],wishlist:[],settings:{lastSync:null,github:{token:'',owner:'',repo:'literate-palm-tree',branch:'main',path:'data/mona-data.enc.json',password:'',autoSync:false,lastCloudSync:null,connected:false}}
 };
 var currentView = {tab:'home',tripDetail:null,checklistDetail:null,calYear:0,calMonth:0,selectedDate:null};
@@ -877,6 +894,7 @@ function loadState(){
       state.settings = parsed.settings || {};
     }
   }catch(e){console.error('Load error:',e)}
+  if(!state.profile.themeColor){state.profile.themeColor='green'}
   if(!state.profile.deviceId){
     state.profile.deviceId = 'dev_' + Math.random().toString(36).substr(2,9);
     state.profile.deviceName = getDeviceName();
@@ -1077,14 +1095,12 @@ function renderHome(){
     html+='<div style="text-align:center;padding:16px 0;color:var(--text-muted);font-size:13px">还没有想去的地点，添加一个吧 🌍</div>';
   }else{
     state.wishlist.forEach(function(w){
-      var link='https://www.xiaohongshu.com/search_result?keyword='+encodeURIComponent(w.name+' 旅游攻略');
       html+='<div class="wishlist-item">';
       html+='<div class="wishlist-item-top"><span class="wishlist-emoji">🌍</span><div class="wishlist-info"><div class="wishlist-name">'+escapeHtml(w.name)+'</div>'+(w.desc?'<div class="wishlist-desc">'+escapeHtml(w.desc)+'</div>':'')+'</div><button class="wishlist-del" onclick="deleteWishlist(\''+w.id+'\')">✕</button></div>';
       if(w.guide){
         html+='<div class="wishlist-guide"><div class="wishlist-guide-tag">📕 攻略笔记</div>'+escapeHtml(w.guide)+'</div>';
       }
       html+='<div class="wishlist-actions">';
-      html+='<a class="wishlist-link" href="'+link+'" target="_blank" rel="noopener" onclick="window.open(\''+link.replace(/'/g,"\\'")+'\',\'_blank\');return false;">📕 查看攻略</a>';
       html+='<button class="wishlist-btn edit" onclick="editWishlist(\''+w.id+'\')">✏️ 编辑笔记</button>';
       html+='<button class="wishlist-btn generate" onclick="generateTripFromWishlist(\''+w.id+'\')">📋 生成行程</button>';
       html+='</div>';
@@ -1139,8 +1155,16 @@ function showAddFootprintModal(latlng){
 function selectEmoji(btn){
   document.querySelectorAll('.emoji-btn').forEach(function(b){b.classList.remove('active')});
   btn.classList.add('active');
-  var hidden=btn.closest('.modal').querySelector('#fp-emoji');
-  if(hidden) hidden.value=btn.textContent;
+  var modal=btn.closest('.modal');
+  if(!modal)return;
+  var fpHidden=modal.querySelector('#fp-emoji');
+  if(fpHidden)fpHidden.value=btn.textContent;
+  var avatarHidden=modal.querySelector('#pf-avatar');
+  if(avatarHidden){
+    avatarHidden.value=btn.textContent;
+    var preview=modal.querySelector('#avatar-preview-emoji');
+    if(preview)preview.innerHTML=btn.textContent;
+  }
 }
 
 function saveFootprint(){
@@ -1179,14 +1203,55 @@ function deleteWishlist(id){
 function editWishlist(id){
   var w=state.wishlist.find(function(x){return x.id===id});
   if(!w)return;
-  var link='https://www.xiaohongshu.com/search_result?keyword='+encodeURIComponent(w.name+' 旅游攻略');
   var html='<div class="form-group"><label>地点名称</label><input type="text" id="wl-edit-name" class="form-input" value="'+escapeHtml(w.name)+'"></div>';
   html+='<div class="form-group"><label>📕 攻略笔记</label>';
-  html+='<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">从小红书攻略中摘抄或自行编写旅行要点，生成行程时会自动填入</div>';
-  html+='<a href="'+link+'" target="_blank" rel="noopener" onclick="window.open(\''+link.replace(/'/g,"\\'")+'\',\'_blank\');return false;" style="display:inline-block;font-size:11px;color:#FF6B6B;margin-bottom:8px;text-decoration:none">📕 点此查看小红书「'+escapeHtml(w.name)+'」攻略 →</a>';
-  html+='<textarea id="wl-edit-guide" class="form-input" style="min-height:160px;line-height:1.6" placeholder="在此粘贴或编写攻略笔记...\n\n例如：\nDay1：抵达后先去XX景点，门票XX元，建议下午去看日落\nDay2：早上前往XX，中午品尝当地XX美食，下午逛XX老街\nDay3：XX公园 → XX博物馆 → 返程\n\n必吃美食：XX、XX\n注意事项：XX\n\n参考来源：小红书@XX的攻略笔记">'+escapeHtml(w.guide||'')+'</textarea></div>';
+  html+='<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">粘贴小红书笔记链接自动提取内容，或直接粘贴/编写攻略文字</div>';
+  html+='<div style="display:flex;gap:8px;margin-bottom:8px"><input type="text" id="wl-xhs-url" class="form-input" style="flex:1;font-size:12px" placeholder="粘贴小红书笔记链接..." onkeydown="if(event.key===\'Enter\')fetchXhsNote()"><button class="btn-primary" style="white-space:nowrap;padding:0 14px" onclick="fetchXhsNote()">提取</button></div>';
+  html+='<div id="xhs-status" style="font-size:11px;color:var(--text-muted);margin-bottom:6px;display:none"></div>';
+  html+='<textarea id="wl-edit-guide" class="form-input" style="min-height:160px;line-height:1.6" placeholder="提取的笔记内容或自行编写的攻略...\n\n例如：\nDay1：抵达后先去XX景点，门票XX元，建议下午去看日落\nDay2：早上前往XX，中午品尝当地XX美食，下午逛XX老街\nDay3：XX公园 → XX博物馆 → 返程\n\n必吃美食：XX、XX\n注意事项：XX">'+escapeHtml(w.guide||'')+'</textarea></div>';
   html+='<div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveWishlistEdit(\''+id+'\')">保存</button></div>';
   showModal('✏️ 编辑攻略笔记',html);
+}
+
+async function fetchXhsNote(){
+  var urlInput=document.getElementById('wl-xhs-url');
+  var url=urlInput.value.trim();
+  if(!url){showToast('请输入小红书笔记链接','error');return}
+  if(!url.match(/^https?:\/\/(www\.)?(xiaohongshu\.com|xhslink\.com)/i)){
+    showToast('请输入有效的小红书链接','error');return;
+  }
+  var statusEl=document.getElementById('xhs-status');
+  if(statusEl){statusEl.style.display='block';statusEl.style.color='var(--primary)';statusEl.textContent='⏳ 正在提取笔记内容...'}
+  try{
+    var proxyUrl='https://api.allorigins.win/raw?url='+encodeURIComponent(url);
+    var resp=await fetch(proxyUrl,{signal:AbortSignal.timeout?AbortSignal.timeout(15000):undefined});
+    if(!resp.ok)throw new Error('HTTP '+resp.status);
+    var html=await resp.text();
+    var content='';
+    var titleMatch=html.match(/<meta[^>]+(?:property|name)=["']og:title["'][^>]+content=["']([^"']+)["']/i);
+    var descMatch=html.match(/<meta[^>]+(?:property|name)=["](?:og:description|description)["'][^>]+content=["']([^"']+)["']/i);
+    if(titleMatch)content+=titleMatch[1]+'\n\n';
+    if(descMatch)content+=descMatch[1];
+    if(!content){
+      var noteMatch=html.match(/"desc":"((?:[^"\\]|\\.)*)"/);
+      if(noteMatch)content=noteMatch[1];
+    }
+    if(content){
+      content=content.replace(/\\n/g,'\n').replace(/\\u002F/g,'/').replace(/\\"/g,'"').replace(/\\t/g,'  ');
+      var ta=document.getElementById('wl-edit-guide');
+      if(ta){
+        ta.value=content;
+        if(statusEl){statusEl.style.color='var(--primary)';statusEl.textContent='✅ 笔记内容已提取，可编辑修改'}
+        showToast('✅ 笔记内容已提取');
+      }
+    }else{
+      if(statusEl){statusEl.style.color='var(--warning)';statusEl.textContent='⚠️ 未能自动提取，请手动粘贴笔记内容'}
+      showToast('⚠️ 未能自动提取，请手动粘贴','error');
+    }
+  }catch(e){
+    if(statusEl){statusEl.style.color='var(--danger)';statusEl.textContent='⚠️ 提取失败，请手动复制笔记内容粘贴到下方'}
+    showToast('⚠️ 提取失败，请手动粘贴','error');
+  }
 }
 
 function saveWishlistEdit(id){
@@ -1237,7 +1302,7 @@ function generateTripFromWishlist(id){
   html+='<div class="form-group"><label>目的地</label><input type="text" id="gen-destination" class="form-input" value="'+escapeHtml(w.name)+'"></div>';
   html+='<div class="form-group"><label>📋 行程内容（可修改）</label>';
   html+='<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">以下内容从攻略笔记自动提取，你可以自由修改后再生成</div>';
-  var defaultContent=w.guide||('前往'+w.name+'旅行，参考小红书攻略笔记制定行程计划。');
+  var defaultContent=w.guide||('前往'+w.name+'旅行，请编辑行程计划。');
   html+='<textarea id="gen-content" class="form-input" style="min-height:180px;line-height:1.6" placeholder="行程内容...">'+escapeHtml(defaultContent)+'</textarea></div>';
 
   html+='<div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveTripFromWishlist(\''+id+'\')">📋 生成行程</button></div>';
@@ -2134,6 +2199,14 @@ function editProfile(){
   html+='<input type="hidden" id="pf-avatar-type" value="'+curAvatarType+'">';
   html+='<input type="hidden" id="pf-avatar-img" value="'+(state.profile.avatarImg||'')+'">';
   html+='</div>';
+  // Theme color section
+  html+='<div class="form-group"><label>🎨 主题颜色（全App生效）</label>';
+  html+='<div class="bg-preset-grid">';
+  var curTheme = state.profile.themeColor || 'green';
+  THEME_PRESETS.forEach(function(t){
+    html+='<div class="theme-preset'+(t.id===curTheme?' active':'')+'" style="background:linear-gradient(135deg,'+t.primaryLight+' 0%,'+t.primary+' 100%)" onclick="selectThemeColor(\''+t.id+'\')" title="'+t.name+'"></div>';
+  });
+  html+='</div><div style="font-size:11px;color:var(--text-muted);margin-top:6px">选择主题色后全App按钮、卡片、导航栏等颜色都会变化</div></div>';
   // Background section - applies to all pages
   html+='<div class="form-group"><label>🌐 全局背景（所有页面）</label>';
   html+='<div class="bg-preset-grid">';
@@ -2175,7 +2248,7 @@ function saveProfile(){
   state.profile.avatarType=avatarType;
   state.profile.avatarImg=avatarImg||null;
   if(opacityEl){state.profile.bgOpacity=parseFloat(opacityEl.value)}
-  saveState();closeModal();showToast('资料已更新');applyGlobalBg();renderProfile();
+  saveState();closeModal();showToast('资料已更新');applyTheme();applyGlobalBg();renderProfile();
 }
 
 function switchAvatarType(type){
@@ -2230,6 +2303,14 @@ function selectProfileBg(id){
   var clearBtn=event.target.closest('.form-group').querySelector('.btn-text');
   if(clearBtn)clearBtn.remove();
   showToast('背景已选择');
+}
+
+function selectThemeColor(id){
+  state.profile.themeColor=id;
+  applyTheme();
+  document.querySelectorAll('.theme-preset').forEach(function(el){el.classList.remove('active')});
+  event.target.classList.add('active');
+  showToast('主题色已切换');
 }
 
 function uploadProfileBg(e){
@@ -2666,12 +2747,27 @@ function applyGlobalBg(){
   el.style.backgroundSize='cover';
   el.style.backgroundPosition='center';
   var opacity=state.profile.bgOpacity!=null?state.profile.bgOpacity:0.85;
-  // Global bg is behind glass cards, so use a lower opacity for subtlety
   el.style.opacity=opacity;
+}
+
+function applyTheme(){
+  var theme=THEME_PRESETS.find(function(t){return t.id===state.profile.themeColor})||THEME_PRESETS[0];
+  var root=document.documentElement;
+  root.style.setProperty('--primary',theme.primary);
+  root.style.setProperty('--primary-mid',theme.primaryMid);
+  root.style.setProperty('--primary-light',theme.primaryLight);
+  root.style.setProperty('--primary-lighter',theme.primaryLighter);
+  root.style.setProperty('--primary-lightest',theme.primaryLightest);
+  root.style.setProperty('--bg',theme.bg);
+  root.style.setProperty('--text',theme.text);
+  root.style.setProperty('--border',theme.border);
+  var meta=document.querySelector('meta[name="theme-color"]');
+  if(meta)meta.setAttribute('content',theme.primary);
 }
 
 function init(){
   loadState();
+  applyTheme();
   applyGlobalBg();
   switchTab('home');
   window.addEventListener('online',function(){updateSyncStatus('online');showToast('🟢 网络已连接')});
