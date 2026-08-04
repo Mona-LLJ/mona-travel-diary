@@ -317,6 +317,7 @@ font-size:14px;cursor:pointer;font-weight:600;transition:all .2s;
 .day-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .day-label{font-size:14px;font-weight:700;color:var(--text);display:flex;align-items:center;gap:6px}
 .day-date{font-size:12px;color:var(--text-muted)}
+.day-route{font-size:12px;color:var(--primary);font-weight:600;margin-left:4px}
 .day-add-btn{background:var(--primary-lightest);border:none;width:28px;height:28px;border-radius:50%;font-size:16px;cursor:pointer;color:var(--primary);transition:all .2s}
 .day-add-btn:active{transform:scale(.9)}
 .activity-item{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--primary-lightest)}
@@ -707,6 +708,30 @@ display:flex;align-items:center;gap:6px;
 .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
 .toast.error{background:rgba(239,83,80,.95)}
 
+/* ===== HOME WEATHER (dual location) ===== */
+.home-weather-row{display:flex;gap:8px;margin-bottom:16px}
+.home-weather-col{flex:1;min-width:0}
+.hw-days{display:flex;gap:2px;overflow-x:auto;padding-bottom:2px}
+.hw-day{flex-shrink:0;width:36px;text-align:center;padding:4px 2px;border-radius:6px;background:rgba(255,255,255,.4)}
+.hw-day.today{background:var(--primary-lightest);border:1px solid var(--primary-light)}
+.hw-day-date{font-size:9px;color:var(--text-muted);margin-bottom:1px}
+.hw-day-icon{font-size:16px;margin-bottom:1px}
+.hw-day-temp{font-size:9px;font-weight:600;color:var(--text);line-height:1.2}
+
+/* ===== MAP SEARCH ===== */
+.map-search-bar{display:flex;gap:8px;margin-bottom:8px;position:relative;z-index:401}
+.map-search-bar input{flex:1;padding:10px 14px;border:1.5px solid var(--border);border-radius:var(--radius-sm);font-size:13px;background:rgba(255,255,255,.9);outline:none;transition:border .2s}
+.map-search-bar input:focus{border-color:var(--primary-light)}
+.map-search-bar button{background:var(--primary-mid);color:#fff;border:none;width:42px;border-radius:var(--radius-sm);font-size:16px;cursor:pointer;transition:all .2s}
+.map-search-bar button:active{transform:scale(.92)}
+.map-search-results{background:rgba(255,255,255,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);max-height:200px;overflow-y:auto;margin-bottom:8px;display:none;border:1px solid var(--border)}
+.map-search-results.show{display:block}
+.map-search-result{padding:10px 14px;border-bottom:1px solid var(--primary-lightest);cursor:pointer;font-size:13px;color:var(--text-body);transition:background .15s}
+.map-search-result:hover,.map-search-result:active{background:var(--primary-lightest)}
+.map-search-result:last-child{border-bottom:none}
+.map-search-result-name{font-weight:600;color:var(--text)}
+.map-search-result-addr{font-size:11px;color:var(--text-muted);margin-top:2px}
+
 /* ===== MAP MARKER ===== */
 .map-marker{background:transparent;border:none}
 .marker-pin{
@@ -895,6 +920,13 @@ function loadState(){
       state.settings = parsed.settings || {};
     }
   }catch(e){console.error('Load error:',e)}
+  // Migrate old hotel (single) to hotels (array)
+  state.trips.forEach(function(trip){
+    if(!trip.hotels){
+      trip.hotels = trip.hotel ? [Object.assign({id:genId('hotel')}, trip.hotel)] : [];
+      trip.hotel = null;
+    }
+  });
   if(!state.profile.themeColor){state.profile.themeColor='green'}
   if(!state.profile.deviceId){
     state.profile.deviceId = 'dev_' + Math.random().toString(36).substr(2,9);
@@ -1077,9 +1109,14 @@ function renderHome(){
   html+='<button class="quick-btn" onclick="scrollToMap()"><div class="quick-icon">📍</div><span>添加足迹</span></button>';
   html+='</div>';
 
+  // Weather (dual location)
+  html+=renderHomeWeather();
+
   // Map
   html+='<div class="map-section"><div class="card-title"><span class="emoji">🗺️</span> 足迹地图</div>';
-  html+='<div class="map-container"><div id="map-container"></div><div class="map-hint">👆 点击地图添加足迹</div></div></div>';
+  html+='<div class="map-search-bar"><input type="text" id="map-search-input" placeholder="🔍 搜索地址添加足迹..." onkeydown="if(event.key===\'Enter\')searchAddressOnMap()"><button onclick="searchAddressOnMap()">🔍</button></div>';
+  html+='<div class="map-search-results" id="map-search-results"></div>';
+  html+='<div class="map-container"><div id="map-container"></div><div class="map-hint">👆 点击地图或搜索地址添加足迹</div></div></div>';
 
   // Footprints list
   if(state.footprints.length>0){
@@ -1118,7 +1155,7 @@ function renderHome(){
 function scrollToMap(){
   var mc=document.querySelector('.map-container');
   if(mc) mc.scrollIntoView({behavior:'smooth',block:'center'});
-  showToast('👆 点击地图任意位置添加足迹');
+  showToast('👆 搜索地址或点击地图添加足迹');
 }
 
 // ==================== MAP ====================
@@ -1148,9 +1185,11 @@ function addFootprintMarker(fp){
   fp._marker=m;
 }
 
-function showAddFootprintModal(latlng){
+function showAddFootprintModal(latlng,prefillName){
   var emojis=['🏛️','🏖️','🏔️','🌊','🌸','🏯','🌋','🌲','🌅','🎡','🍜','⛰️'];
-  showModal('📍 添加足迹','<div class="form-group"><label>地点名称</label><input type="text" id="fp-name" class="form-input" placeholder="如：故宫博物院" autofocus></div><div class="form-group"><label>日期</label><input type="date" id="fp-date" class="form-input" value="'+todayStr()+'"></div><div class="form-group"><label>描述（选填）</label><textarea id="fp-desc" class="form-input" placeholder="在这里写下你的感受..."></textarea></div><div class="form-group"><label>选择图标</label><div class="emoji-picker">'+emojis.map(function(e,i){return '<button class="emoji-btn'+(i===0?' active':'')+'" onclick="selectEmoji(this)">'+e+'</button>'}).join('')+'</div></div><input type="hidden" id="fp-emoji" value="🏛️"><input type="hidden" id="fp-lat" value="'+latlng.lat+'"><input type="hidden" id="fp-lng" value="'+latlng.lng+'"><div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveFootprint()">保存足迹</button></div>');
+  var searchHtml='<div class="form-group"><label>🔍 搜索地址</label><div style="display:flex;gap:8px"><input type="text" id="fp-search" class="form-input" placeholder="输入地址搜索..." onkeydown="if(event.key===\'Enter\')searchInFootprintModal()"><button class="btn-primary" style="padding:0 16px;white-space:nowrap" onclick="searchInFootprintModal()">🔍</button></div><div id="fp-search-results" class="map-search-results"></div></div>';
+  var nameVal=prefillName?'value="'+escapeHtml(prefillName)+'"':'';
+  showModal('📍 添加足迹',searchHtml+'<div class="form-group"><label>地点名称</label><input type="text" id="fp-name" class="form-input" placeholder="如：故宫博物院" '+nameVal+'></div><div class="form-group"><label>日期</label><input type="date" id="fp-date" class="form-input" value="'+todayStr()+'"></div><div class="form-group"><label>描述（选填）</label><textarea id="fp-desc" class="form-input" placeholder="在这里写下你的感受..."></textarea></div><div class="form-group"><label>选择图标</label><div class="emoji-picker">'+emojis.map(function(e,i){return '<button class="emoji-btn'+(i===0?' active':'')+'" onclick="selectEmoji(this)">'+e+'</button>'}).join('')+'</div></div><input type="hidden" id="fp-emoji" value="🏛️"><input type="hidden" id="fp-lat" value="'+latlng.lat+'"><input type="hidden" id="fp-lng" value="'+latlng.lng+'"><div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveFootprint()">保存足迹</button></div>');
 }
 
 function selectEmoji(btn){
@@ -1184,6 +1223,76 @@ function deleteFootprint(id){
     state.footprints=state.footprints.filter(function(f){return f.id!==id});
     saveState();showToast('已删除');renderHome();
   });
+}
+
+// ----- Address Search (Nominatim) -----
+async function searchAddressOnMap(){
+  var input=document.getElementById('map-search-input');
+  var resultsEl=document.getElementById('map-search-results');
+  if(!input||!resultsEl)return;
+  var query=input.value.trim();
+  if(!query){resultsEl.classList.remove('show');return}
+  resultsEl.classList.add('show');
+  resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">🔍 搜索中...</div>';
+  try{
+    var resp=await fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(query)+'&format=json&limit=5&addressdetails=1&accept-language=zh');
+    var results=await resp.json();
+    if(!results||results.length===0){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">未找到结果</div>';return}
+    resultsEl.innerHTML=results.map(function(r){
+      var name=r.name||(r.display_name?r.display_name.split(',')[0]:'未知');
+      return '<div class="map-search-result" data-lat="'+r.lat+'" data-lng="'+r.lon+'" data-name="'+escapeHtml(name)+'" onclick="selectMapSearchResult(this)"><div class="map-search-result-name">'+escapeHtml(name)+'</div><div class="map-search-result-addr">'+escapeHtml(r.display_name||'')+'</div></div>';
+    }).join('');
+  }catch(e){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">搜索失败，请检查网络</div>'}
+}
+
+function selectMapSearchResult(el){
+  var lat=parseFloat(el.getAttribute('data-lat'));
+  var lng=parseFloat(el.getAttribute('data-lng'));
+  var name=el.getAttribute('data-name');
+  var resultsEl=document.getElementById('map-search-results');
+  if(resultsEl)resultsEl.classList.remove('show');
+  var input=document.getElementById('map-search-input');
+  if(input)input.value='';
+  // Pan map
+  if(map){map.setView([lat,lng],14)}
+  // Open add footprint modal with pre-filled data
+  showAddFootprintModal({lat:lat,lng:lng},name);
+}
+
+async function searchInFootprintModal(){
+  var input=document.getElementById('fp-search');
+  var resultsEl=document.getElementById('fp-search-results');
+  if(!input||!resultsEl)return;
+  var query=input.value.trim();
+  if(!query){resultsEl.classList.remove('show');return}
+  resultsEl.classList.add('show');
+  resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">🔍 搜索中...</div>';
+  try{
+    var resp=await fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(query)+'&format=json&limit=5&addressdetails=1&accept-language=zh');
+    var results=await resp.json();
+    if(!results||results.length===0){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">未找到结果</div>';return}
+    resultsEl.innerHTML=results.map(function(r){
+      var name=r.name||(r.display_name?r.display_name.split(',')[0]:'未知');
+      return '<div class="map-search-result" data-lat="'+r.lat+'" data-lng="'+r.lon+'" data-name="'+escapeHtml(name)+'" onclick="selectFootprintSearchResult(this)"><div class="map-search-result-name">'+escapeHtml(name)+'</div><div class="map-search-result-addr">'+escapeHtml(r.display_name||'')+'</div></div>';
+    }).join('');
+  }catch(e){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">搜索失败，请检查网络</div>'}
+}
+
+function selectFootprintSearchResult(el){
+  var lat=el.getAttribute('data-lat');
+  var lng=el.getAttribute('data-lng');
+  var name=el.getAttribute('data-name');
+  var resultsEl=document.getElementById('fp-search-results');
+  if(resultsEl)resultsEl.classList.remove('show');
+  var searchEl=document.getElementById('fp-search');
+  if(searchEl)searchEl.value='';
+  var nameEl=document.getElementById('fp-name');
+  if(nameEl&&name)nameEl.value=name;
+  var latEl=document.getElementById('fp-lat');
+  var lngEl=document.getElementById('fp-lng');
+  if(latEl)latEl.value=lat;
+  if(lngEl)lngEl.value=lng;
+  showToast('📍 已选择：'+name);
 }
 
 // ==================== WISHLIST ====================
@@ -1435,7 +1544,7 @@ function saveTripFromWishlist(wishlistId){
     var newTrip={
       id:genId('trip'),name:name,destination:destination,
       startDate:startDate,endDate:endDate,budget:budget,
-      notes:content,hotel:null,transports:[],itinerary:{}
+      notes:content,hotels:[],transports:[],itinerary:{}
     };
 
     // Parse content for day-by-day activities
@@ -1662,6 +1771,23 @@ function fetchWeather(cityName,callback){
   }).catch(function(err){callback(null,'网络错误');});
 }
 
+function fetchWeatherByCoords(lat,lng,cityName,callback){
+  var cacheKey=(cityName||'local')+'_'+lat.toFixed(2)+lng.toFixed(2);
+  var cached=weatherCache[cacheKey];
+  if(cached&&Date.now()-cached.timestamp<30*60*1000){callback(cached.data);return}
+  var wUrl='https://api.open-meteo.com/v1/forecast?latitude='+lat+'&longitude='+lng+'&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max,wind_speed_10m_max&timezone=auto&forecast_days=7';
+  fetch(wUrl).then(function(r){return r.json()}).then(function(w){
+    if(!w||!w.daily){callback(null);return}
+    var data={city:cityName||'当前位置',daily:[]};
+    for(var i=0;i<w.daily.time.length;i++){
+      var wc=getWeatherIcon(w.daily.weather_code[i]);
+      data.daily.push({date:w.daily.time[i],icon:wc.icon,label:wc.label,tempMax:Math.round(w.daily.temperature_2m_max[i]),tempMin:Math.round(w.daily.temperature_2m_min[i]),uv:w.daily.uv_index_max[i]!=null?Math.round(w.daily.uv_index_max[i]):0,rainProb:w.daily.precipitation_probability_max[i]!=null?w.daily.precipitation_probability_max[i]:0,windSpeed:w.daily.wind_speed_10m_max[i]!=null?Math.round(w.daily.wind_speed_10m_max[i]):0});
+    }
+    weatherCache[cacheKey]={data:data,timestamp:Date.now()};
+    callback(data);
+  }).catch(function(err){callback(null,'网络错误');});
+}
+
 function renderWeatherCard(trip){
   if(!trip.destination)return'';
   var today=new Date();var ds=today.getFullYear()+'-'+p(today.getMonth()+1)+'-'+p(today.getDate());
@@ -1743,6 +1869,78 @@ function refreshWeather(tripId){
   });
 }
 
+// ==================== HOME WEATHER ====================
+function renderHomeWeather(){
+  // Find next/ongoing trip for destination weather
+  var nextTrip=null,minDays=Infinity;
+  state.trips.forEach(function(t){
+    var status=getTripStatus(t);
+    if(status==='upcoming'||status==='ongoing'){
+      var d=daysUntil(t.startDate);if(d<minDays){minDays=d;nextTrip=t}
+    }
+  });
+  var html='<div style="margin-bottom:16px"><div class="card-title"><span class="emoji">🌦️</span> 天气信息</div>';
+  html+='<div class="home-weather-row">';
+  // Left: current location
+  html+='<div class="home-weather-col"><div class="weather-card" id="hw-local" style="padding:12px"><div class="weather-loading" style="padding:12px;font-size:12px">📍 定位中...</div></div></div>';
+  // Right: trip destination
+  if(nextTrip&&nextTrip.destination){
+    html+='<div class="home-weather-col"><div class="weather-card" id="hw-trip" style="padding:12px"><div class="weather-loading" style="padding:12px;font-size:12px">✈️ 加载中...</div></div></div>';
+  }else{
+    html+='<div class="home-weather-col"><div class="weather-card" style="padding:12px"><div style="text-align:center;padding:12px;color:var(--text-muted);font-size:11px;line-height:1.6">✈️<br>添加行程后<br>显示目的地天气</div></div></div>';
+  }
+  html+='</div></div>';
+  // Async fetch
+  setTimeout(function(){
+    // Current location via geolocation
+    if(navigator.geolocation){
+      navigator.geolocation.getCurrentPosition(function(pos){
+        var lat=pos.coords.latitude,lng=pos.coords.longitude;
+        fetch('https://nominatim.openstreetmap.org/reverse?lat='+lat+'&lon='+lng+'&format=json&accept-language=zh&zoom=10')
+          .then(function(r){return r.json()})
+          .then(function(geo){
+            var cn='当前位置';
+            if(geo&&geo.address){cn=geo.address.city||geo.address.town||geo.address.county||geo.address.state||'当前位置'}
+            fetchWeatherByCoords(lat,lng,cn,function(data,err){renderHomeWeatherCol('hw-local',data,err,cn)});
+          })
+          .catch(function(){
+            fetchWeatherByCoords(lat,lng,'当前位置',function(data,err){renderHomeWeatherCol('hw-local',data,err,'当前位置')});
+          });
+      },function(){
+        var el=document.getElementById('hw-local');
+        if(el)el.innerHTML='<div class="weather-error" style="padding:12px">⚠️ 无法获取定位<br><span style="font-size:10px">请检查定位权限</span></div>';
+      },{timeout:8000});
+    }else{
+      var el=document.getElementById('hw-local');
+      if(el)el.innerHTML='<div class="weather-error" style="padding:12px">⚠️ 设备不支持定位</div>';
+    }
+    // Trip destination
+    if(nextTrip&&nextTrip.destination){
+      fetchWeather(nextTrip.destination,function(data,err){renderHomeWeatherCol('hw-trip',data,err,nextTrip.destination)});
+    }
+  },100);
+  return html;
+}
+
+function renderHomeWeatherCol(elId,data,err,cityName){
+  var el=document.getElementById(elId);
+  if(!el)return;
+  if(err){el.innerHTML='<div class="weather-error" style="padding:12px">⚠️ '+err+'</div>';return}
+  if(!data){el.innerHTML='<div class="weather-error" style="padding:12px">暂无数据</div>';return}
+  var today=new Date();var ds=today.getFullYear()+'-'+p(today.getMonth()+1)+'-'+p(today.getDate());
+  var icon=elId==='hw-local'?'📍':'✈️';
+  var html='<div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+icon+' '+escapeHtml(cityName||data.city)+'</div>';
+  html+='<div class="hw-days">';
+  data.daily.forEach(function(d){
+    var isToday=d.date===ds;
+    var dt=new Date(d.date);
+    var dayLabel=isToday?'今天':(dt.getMonth()+1)+'/'+dt.getDate();
+    html+='<div class="hw-day'+(isToday?' today':'')+'"><div class="hw-day-date">'+dayLabel+'</div><div class="hw-day-icon">'+d.icon+'</div><div class="hw-day-temp">'+d.tempMax+'°/'+d.tempMin+'°</div></div>';
+  });
+  html+='</div>';
+  el.innerHTML=html;
+}
+
 // ==================== TRIPS ====================
 function renderTrips(){
   var container=document.getElementById('tab-trips');
@@ -1773,10 +1971,15 @@ function renderTrips(){
 
 function calcTripSpent(trip){
   var s=0;
-  if(trip.hotel&&trip.hotel.pricePerNight){
-    var n=Math.max(1,daysBetween(trip.hotel.checkIn,trip.hotel.checkOut)-1);
-    s+=trip.hotel.pricePerNight*n;
-  }
+  // Migrate old single hotel to array
+  var hotels=trip.hotels;
+  if(!hotels&&trip.hotel){hotels=[trip.hotel]}
+  if(hotels) hotels.forEach(function(h){
+    if(h.pricePerNight){
+      var n=Math.max(1,daysBetween(h.checkIn,h.checkOut)-1);
+      s+=h.pricePerNight*n;
+    }
+  });
   if(trip.transports) trip.transports.forEach(function(t){s+=t.price||0});
   if(trip.itinerary) Object.values(trip.itinerary).forEach(function(acts){acts.forEach(function(a){s+=a.cost||0})});
   return s;
@@ -1785,6 +1988,29 @@ function calcTripSpent(trip){
 function viewTrip(id){currentView.tripDetail=id;switchTab('trips')}
 
 function backToTripList(){currentView.tripDetail=null;switchTab('trips')}
+
+function getDayRoute(trip,dateStr){
+  var parts=[];
+  // 1. Check trip.transports for matching date
+  if(trip.transports){
+    trip.transports.forEach(function(t){
+      if(t.date===dateStr && (t.from||t.to)){
+        parts.push((t.from||'')+' → '+(t.to||''));
+      }
+    });
+  }
+  // 2. Check itinerary activities with type 'transport' for from→to in title
+  var acts=(trip.itinerary&&trip.itinerary[dateStr])?trip.itinerary[dateStr]:[];
+  acts.forEach(function(a){
+    if(a.type==='transport'){
+      var m=a.title.match(/(.+?)\s*(?:→|->|=>|到|至)\s*(.+)/);
+      if(m){
+        parts.push(m[1].trim()+' → '+m[2].trim());
+      }
+    }
+  });
+  return parts.length>0?parts.join('， '):'';
+}
 
 function renderTripDetail(id){
   var trip=state.trips.find(function(t){return t.id===id});
@@ -1817,18 +2043,23 @@ function renderTripDetail(id){
     html+=renderWeatherCard(trip);
   }
 
-  // Hotel
-  html+='<div class="info-block"><div class="info-block-header"><div class="info-block-title">🏨 住宿信息</div>'+(trip.hotel?'<button class="info-block-add" onclick="showHotelEditor(\''+trip.id+'\')">编辑</button>':'<button class="info-block-add" onclick="showHotelEditor(\''+trip.id+'\')">+ 添加</button>')+'</div>';
-  if(trip.hotel){
-    html+='<div class="info-item">';
-    html+='<div class="info-item-row"><span class="info-item-label">酒店名称</span><span class="info-item-value">'+escapeHtml(trip.hotel.name||'')+'</span></div>';
-    if(trip.hotel.address) html+='<div class="info-item-row"><span class="info-item-label">地址</span><span class="info-item-value">'+escapeHtml(trip.hotel.address)+'</span></div>';
-    html+='<div class="info-item-row"><span class="info-item-label">入住</span><span class="info-item-value">'+formatDateShort(trip.hotel.checkIn)+'</span></div>';
-    html+='<div class="info-item-row"><span class="info-item-label">退房</span><span class="info-item-value">'+formatDateShort(trip.hotel.checkOut)+'</span></div>';
-    if(trip.hotel.pricePerNight) html+='<div class="info-item-row"><span class="info-item-label">每晚价格</span><span class="info-item-value">¥'+trip.hotel.pricePerNight+'</span></div>';
-    if(trip.hotel.bookingNo) html+='<div class="info-item-row"><span class="info-item-label">预订号</span><span class="info-item-value">'+escapeHtml(trip.hotel.bookingNo)+'</span></div>';
-    html+='<div class="info-item-actions"><button onclick="deleteHotel(\''+trip.id+'\')">删除</button></div>';
-    html+='</div>';
+  // Hotel (multiple, like transport)
+  var hotels=trip.hotels;
+  if(!hotels&&trip.hotel){hotels=[trip.hotel]} // migrate old data
+  if(!hotels) hotels=[];
+  html+='<div class="info-block"><div class="info-block-header"><div class="info-block-title">🏨 住宿信息</div><button class="info-block-add" onclick="showHotelEditor(\''+trip.id+'\')">+ 添加</button></div>';
+  if(hotels.length>0){
+    hotels.forEach(function(h){
+      html+='<div class="info-item">';
+      html+='<div class="info-item-row"><span class="info-item-label">酒店名称</span><span class="info-item-value">'+escapeHtml(h.name||'')+'</span></div>';
+      if(h.address) html+='<div class="info-item-row"><span class="info-item-label">地址</span><span class="info-item-value">'+escapeHtml(h.address)+'</span></div>';
+      html+='<div class="info-item-row"><span class="info-item-label">入住</span><span class="info-item-value">'+formatDateShort(h.checkIn)+'</span></div>';
+      html+='<div class="info-item-row"><span class="info-item-label">退房</span><span class="info-item-value">'+formatDateShort(h.checkOut)+'</span></div>';
+      if(h.pricePerNight) html+='<div class="info-item-row"><span class="info-item-label">每晚价格</span><span class="info-item-value">¥'+h.pricePerNight+'</span></div>';
+      if(h.bookingNo) html+='<div class="info-item-row"><span class="info-item-label">预订号</span><span class="info-item-value">'+escapeHtml(h.bookingNo)+'</span></div>';
+      html+='<div class="info-item-actions"><button onclick="showHotelEditor(\''+trip.id+'\',\''+h.id+'\')">编辑</button> <button onclick="deleteHotel(\''+trip.id+'\',\''+h.id+'\')">删除</button></div>';
+      html+='</div>';
+    });
   }else{
     html+='<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:13px">还没有添加住宿信息</div>';
   }
@@ -1862,7 +2093,8 @@ function renderTripDetail(id){
     var acts=(trip.itinerary&&trip.itinerary[ds])?trip.itinerary[ds]:[];
     acts.sort(function(a,b){return(a.time||'').localeCompare(b.time||'')});
     html+='<div class="day-card">';
-    html+='<div class="day-header"><div class="day-label">Day '+(i+1)+'<span class="day-date"> · '+formatDateShort(ds)+'</span></div><button class="day-add-btn" onclick="showActivityEditor(\''+trip.id+'\',\''+ds+'\')">+</button></div>';
+    var route=getDayRoute(trip,ds);
+    html+='<div class="day-header"><div class="day-label">Day '+(i+1)+'<span class="day-date"> · '+formatDateShort(ds)+'</span>'+(route?'<span class="day-route"> 📍行程：'+escapeHtml(route)+'</span>':'')+'</div><button class="day-add-btn" onclick="showActivityEditor(\''+trip.id+'\',\''+ds+'\')">+</button></div>';
     if(acts.length===0){
       html+='<div style="text-align:center;padding:8px;color:var(--text-muted);font-size:12px">还没有添加日程，点击 + 添加</div>';
     }else{
@@ -1906,7 +2138,7 @@ function saveTrip(tripId){
     var trip=state.trips.find(function(t){return t.id===tripId});
     if(trip){Object.assign(trip,data)}
   }else{
-    var nt=Object.assign({id:genId('trip'),hotel:null,transports:[],itinerary:{}},data);
+    var nt=Object.assign({id:genId('trip'),hotels:[],transports:[],itinerary:{}},data);
     state.trips.push(nt);tripId=nt.id;
   }
   saveState();closeModal();showToast('✈️ 行程已保存');
@@ -1920,28 +2152,38 @@ function deleteTrip(id){
   });
 }
 
-function showHotelEditor(tripId){
+function showHotelEditor(tripId,hotelId){
   var trip=state.trips.find(function(t){return t.id===tripId});
-  var h=trip.hotel||{};
-  showModal('🏨 住宿信息',
+  if(!trip.hotels){trip.hotels=trip.hotel?[trip.hotel]:[]}
+  var h=hotelId?trip.hotels.find(function(x){return x.id===hotelId}):{};
+  showModal(hotelId?'编辑住宿':'添加住宿',
     '<div class="form-group"><label>酒店名称</label><input type="text" id="hotel-name" class="form-input" placeholder="如：北京王府井酒店" value="'+escapeHtml(h.name||'')+'"></div>'+
     '<div class="form-group"><label>地址</label><input type="text" id="hotel-address" class="form-input" placeholder="详细地址" value="'+escapeHtml(h.address||'')+'"></div>'+
     '<div class="form-row"><div class="form-group"><label>入住日期</label><input type="date" id="hotel-checkin" class="form-input" value="'+(h.checkIn||trip.startDate||'')+'"></div><div class="form-group"><label>退房日期</label><input type="date" id="hotel-checkout" class="form-input" value="'+(h.checkOut||trip.endDate||'')+'"></div></div>'+
     '<div class="form-row"><div class="form-group"><label>每晚价格 (¥)</label><input type="number" id="hotel-price" class="form-input" placeholder="500" value="'+(h.pricePerNight||'')+'"></div><div class="form-group"><label>预订号</label><input type="text" id="hotel-booking" class="form-input" placeholder="选填" value="'+escapeHtml(h.bookingNo||'')+'"></div></div>'+
-    '<div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveHotel(\''+tripId+'\')">保存</button></div>'
+    '<div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveHotel(\''+tripId+'\''+(hotelId?',\''+hotelId+'\'':'')+')">保存</button></div>'
   );
 }
 
-function saveHotel(tripId){
+function saveHotel(tripId,hotelId){
   var trip=state.trips.find(function(t){return t.id===tripId});
-  trip.hotel={name:document.getElementById('hotel-name').value.trim(),address:document.getElementById('hotel-address').value.trim(),checkIn:document.getElementById('hotel-checkin').value,checkOut:document.getElementById('hotel-checkout').value,pricePerNight:parseFloat(document.getElementById('hotel-price').value)||0,bookingNo:document.getElementById('hotel-booking').value.trim()};
+  if(!trip.hotels){trip.hotels=trip.hotel?[trip.hotel]:[];trip.hotel=null}
+  var data={name:document.getElementById('hotel-name').value.trim(),address:document.getElementById('hotel-address').value.trim(),checkIn:document.getElementById('hotel-checkin').value,checkOut:document.getElementById('hotel-checkout').value,pricePerNight:parseFloat(document.getElementById('hotel-price').value)||0,bookingNo:document.getElementById('hotel-booking').value.trim()};
+  if(hotelId){
+    var h=trip.hotels.find(function(x){return x.id===hotelId});
+    if(h) Object.assign(h,data);
+  }else{
+    data.id=genId('hotel');trip.hotels.push(data);
+  }
   saveState();closeModal();showToast('🏨 住宿信息已保存');renderTripDetail(tripId);
 }
 
-function deleteHotel(tripId){
-  confirmDialog('删除住宿','确定要删除住宿信息吗？',function(){
+function deleteHotel(tripId,hotelId){
+  confirmDialog('删除住宿','确定要删除这条住宿信息吗？',function(){
     var trip=state.trips.find(function(t){return t.id===tripId});
-    trip.hotel=null;saveState();showToast('已删除');renderTripDetail(tripId);
+    if(!trip.hotels){trip.hotels=[]}
+    trip.hotels=trip.hotels.filter(function(h){return h.id!==hotelId});
+    saveState();showToast('已删除');renderTripDetail(tripId);
   });
 }
 
@@ -2295,7 +2537,7 @@ function renderProfile(){
   html+='</div>';
   html+='<input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">';
   // About
-  html+='<div class="about-section"><div class="app-name">🐱 Mona 旅行日记</div><div>Version 2.0.0</div><div style="margin-top:4px">用心记录每一段旅程</div><div style="margin-top:8px;opacity:.6">💚 Made with love</div></div>';
+  html+='<div class="about-section"><div class="app-name">🐱 Mona 旅行日记</div><div>Version 2.1.0</div><div style="margin-top:4px">用心记录每一段旅程</div><div style="margin-top:8px;opacity:.6">💚 Made with love</div></div>';
   document.getElementById('tab-profile').innerHTML=html;
 }
 
