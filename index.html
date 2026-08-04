@@ -1255,6 +1255,7 @@ function clearGuideText(){
 
 function cleanNoteContent(text){
   if(!text)return '';
+  text=text.replace(/\uFFFC/g,''); // strip object replacement chars
   var lines=text.split(/\r?\n/);
   var cleaned=[];
   var prevEmpty=false;
@@ -1304,7 +1305,8 @@ function generateTripFromWishlist(id){
   // New trip fields
   html+='<div id="gen-new-section">';
   html+='<div class="form-group"><label>行程名称</label><input type="text" id="gen-trip-name" class="form-input" value="'+escapeHtml(w.name)+'旅行计划"></div>';
-  html+='<div class="form-row"><div class="form-group"><label>出发日期</label><input type="date" id="gen-trip-start" class="form-input" value="'+today+'"></div><div class="form-group"><label>返程日期</label><input type="date" id="gen-trip-end" class="form-input" value="'+today+'"></div></div>';
+  html+='<div class="form-row"><div class="form-group"><label>出发日期</label><input type="date" id="gen-trip-start" class="form-input" value="'+today+'" onchange="updateGenEndDate()"></div><div class="form-group"><label>返程日期</label><input type="date" id="gen-trip-end" class="form-input" value="'+today+'"></div></div>';
+  html+='<div id="gen-day-hint" style="font-size:12px;color:var(--primary);margin-bottom:8px;display:none"></div>';
   html+='<div class="form-group"><label>预算 (¥)</label><input type="number" id="gen-trip-budget" class="form-input" placeholder="5000" value=""></div>';
   html+='</div>';
 
@@ -1325,11 +1327,12 @@ function generateTripFromWishlist(id){
   html+='<div class="form-group"><label>📋 行程内容（可修改）</label>';
   html+='<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">智能提取：自动识别按天行程、住宿、交通、门票等信息并分类整理，粘贴后可直接修改</div>';
   var defaultContent=w.guide||('前往'+w.name+'旅行，请编辑行程计划。');
-  html+='<textarea id="gen-content" class="form-input" style="min-height:180px;line-height:1.6" placeholder="行程内容...">'+escapeHtml(defaultContent)+'</textarea></div>';
+  html+='<textarea id="gen-content" class="form-input" style="min-height:180px;line-height:1.6" placeholder="行程内容..." oninput="updateGenEndDate()">'+escapeHtml(defaultContent)+'</textarea></div>';
 
   html+='<div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveTripFromWishlist(\''+id+'\')">📋 生成行程</button></div>';
   showModal('📋 提取生成行程',html);
   if(hasTrips) updateGenDateOptions();
+  updateGenEndDate();
 }
 
 function selectGenMode(btn,mode){
@@ -1362,6 +1365,45 @@ function updateGenDateOptions(){
   dateSel.innerHTML=html;
 }
 
+function detectMaxDay(content){
+  if(!content)return 0;
+  var lines=content.split(/\r?\n/);
+  var maxDay=0;
+  for(var i=0;i<lines.length;i++){
+    var line=lines[i].trim();
+    if(!line)continue;
+    var stripped=line.replace(/^[^\u4e00-\u9fa5a-zA-Z0-9]+/,'');
+    var m=stripped.match(/^(?:Day\s*|第|D|day\s*)(\d+|[一二三四五六七八九十]+)(?:天|日)?[\s:：、，,\-\.→｜|]*/i);
+    if(m){
+      var num=/^\d+$/.test(m[1])?parseInt(m[1]):parseDayNumber(m[1]);
+      if(num>maxDay)maxDay=num;
+    }
+  }
+  return maxDay;
+}
+
+function updateGenEndDate(){
+  var contentEl=document.getElementById('gen-content');
+  var hintEl=document.getElementById('gen-day-hint');
+  var startEl=document.getElementById('gen-trip-start');
+  var endEl=document.getElementById('gen-trip-end');
+  if(!contentEl||!startEl||!endEl)return;
+  var content=contentEl.value;
+  var maxDay=detectMaxDay(content);
+  if(maxDay>0&&startEl.value){
+    var d=new Date(startEl.value);
+    d.setDate(d.getDate()+maxDay-1);
+    var autoEnd=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+    endEl.value=autoEnd;
+    if(hintEl){
+      hintEl.style.display='block';
+      hintEl.textContent='📝 检测到 '+maxDay+' 天行程，返程日期已自动调整为 '+formatDateShort(autoEnd);
+    }
+  }else if(hintEl){
+    hintEl.style.display='none';
+  }
+}
+
 function saveTripFromWishlist(wishlistId){
   var w=state.wishlist.find(function(x){return x.id===wishlistId});
   if(!w)return;
@@ -1379,6 +1421,17 @@ function saveTripFromWishlist(wishlistId){
     if(!startDate||!endDate){showToast('请选择日期','error');return}
     if(new Date(endDate)<new Date(startDate)){showToast('返程日期不能早于出发日期','error');return}
 
+    // Auto-extend end date if content has more days than date range
+    var maxDay=detectMaxDay(content);
+    if(maxDay>1){
+      var d=new Date(startDate);
+      d.setDate(d.getDate()+maxDay-1);
+      var neededEnd=d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());
+      if(new Date(neededEnd)>new Date(endDate)){
+        endDate=neededEnd;
+      }
+    }
+
     var newTrip={
       id:genId('trip'),name:name,destination:destination,
       startDate:startDate,endDate:endDate,budget:budget,
@@ -1394,6 +1447,7 @@ function saveTripFromWishlist(wishlistId){
     Object.keys(newTrip.itinerary||{}).forEach(function(k){totalActs+=newTrip.itinerary[k].length});
     var summary='✈️ 行程已生成！';
     if(dayCount>0)summary+='提取了'+dayCount+'天日程、共'+totalActs+'条活动';
+    if(newTrip.endDate!==endDate)summary+='，日期已自动延长至'+formatDateShort(newTrip.endDate);
     
     state.trips.push(newTrip);
     saveState();closeModal();
@@ -1427,7 +1481,9 @@ function saveTripFromWishlist(wishlistId){
 
 function parseGuideToItinerary(trip,content){
   if(!content||!trip.startDate)return;
-  var lines=content.split('\n');
+  // Strip object replacement characters (￼ U+FFFC) from pasted content
+  content=content.replace(/\uFFFC/g,'');
+  var lines=content.split(/\r?\n/);
   var dayActivities={}; // {1:[],2:[],...}
   var currentDay=0;
 
@@ -1471,14 +1527,22 @@ function parseGuideToItinerary(trip,content){
   }
 
   // Convert day activities to itinerary with actual dates
+  // Auto-extend trip.endDate if content has more days than date range
+  var maxDayNum=0;
   Object.keys(dayActivities).forEach(function(d){
     var dayNum=parseInt(d);
+    if(dayNum>maxDayNum)maxDayNum=dayNum;
     var ds=dayToDate(trip.startDate,dayNum-1);
-    if(ds&&new Date(ds)<=new Date(trip.endDate)){
-      if(!trip.itinerary[ds])trip.itinerary[ds]=[];
-      trip.itinerary[ds]=trip.itinerary[ds].concat(dayActivities[d]);
-    }
+    if(!trip.itinerary[ds])trip.itinerary[ds]=[];
+    trip.itinerary[ds]=trip.itinerary[ds].concat(dayActivities[d]);
   });
+  // Auto-extend end date to cover all days
+  if(maxDayNum>0&&trip.endDate){
+    var neededEnd=dayToDate(trip.startDate,maxDayNum-1);
+    if(new Date(neededEnd)>new Date(trip.endDate)){
+      trip.endDate=neededEnd;
+    }
+  }
 }
 
 function classifyAndAddActivity(dayActivities,day,line){
