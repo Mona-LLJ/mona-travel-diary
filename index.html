@@ -1205,53 +1205,74 @@ function editWishlist(id){
   if(!w)return;
   var html='<div class="form-group"><label>地点名称</label><input type="text" id="wl-edit-name" class="form-input" value="'+escapeHtml(w.name)+'"></div>';
   html+='<div class="form-group"><label>📕 攻略笔记</label>';
-  html+='<div style="font-size:11px;color:var(--text-muted);margin-bottom:6px">粘贴小红书笔记链接自动提取内容，或直接粘贴/编写攻略文字</div>';
-  html+='<div style="display:flex;gap:8px;margin-bottom:8px"><input type="text" id="wl-xhs-url" class="form-input" style="flex:1;font-size:12px" placeholder="粘贴小红书笔记链接..." onkeydown="if(event.key===\'Enter\')fetchXhsNote()"><button class="btn-primary" style="white-space:nowrap;padding:0 14px" onclick="fetchXhsNote()">提取</button></div>';
+  html+='<div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;line-height:1.6;background:rgba(255,255,255,.4);border-radius:8px;padding:10px 12px;border:1px solid rgba(0,0,0,.06)">';
+  html+='<b style="color:var(--primary)">📋 如何从小红书复制笔记：</b><br>';
+  html+='1. 在小红书App中打开攻略笔记<br>';
+  html+='2. 长按正文文字 → 「复制」<br>';
+  html+='3. 回到此处 → 点击「📋 从剪贴板粘贴」<br>';
+  html+='4. 内容自动整理，可编辑后保存';
+  html+='</div>';
+  html+='<div style="display:flex;gap:8px;margin-bottom:8px"><button class="btn-primary" style="flex:1;padding:10px 14px;font-size:13px" onclick="pasteFromClipboard()">📋 从剪贴板粘贴</button><button class="btn-secondary" style="padding:10px 14px;font-size:13px" onclick="clearGuideText()">🗑 清空</button></div>';
   html+='<div id="xhs-status" style="font-size:11px;color:var(--text-muted);margin-bottom:6px;display:none"></div>';
-  html+='<textarea id="wl-edit-guide" class="form-input" style="min-height:160px;line-height:1.6" placeholder="提取的笔记内容或自行编写的攻略...\n\n例如：\nDay1：抵达后先去XX景点，门票XX元，建议下午去看日落\nDay2：早上前往XX，中午品尝当地XX美食，下午逛XX老街\nDay3：XX公园 → XX博物馆 → 返程\n\n必吃美食：XX、XX\n注意事项：XX">'+escapeHtml(w.guide||'')+'</textarea></div>';
+  html+='<textarea id="wl-edit-guide" class="form-input" style="min-height:180px;line-height:1.6" placeholder="粘贴或编写攻略笔记...\n\n例如：\nDay1：抵达后先去XX景点，门票XX元，建议下午去看日落\nDay2：早上前往XX，中午品尝当地XX美食，下午逛XX老街\nDay3：XX公园 → XX博物馆 → 返程\n\n必吃美食：XX、XX\n注意事项：XX">'+escapeHtml(w.guide||'')+'</textarea></div>';
   html+='<div class="form-actions"><button class="btn-secondary" onclick="closeModal()">取消</button><button class="btn-primary" onclick="saveWishlistEdit(\''+id+'\')">保存</button></div>';
   showModal('✏️ 编辑攻略笔记',html);
 }
 
-async function fetchXhsNote(){
-  var urlInput=document.getElementById('wl-xhs-url');
-  var url=urlInput.value.trim();
-  if(!url){showToast('请输入小红书笔记链接','error');return}
-  if(!url.match(/^https?:\/\/(www\.)?(xiaohongshu\.com|xhslink\.com)/i)){
-    showToast('请输入有效的小红书链接','error');return;
-  }
+async function pasteFromClipboard(){
   var statusEl=document.getElementById('xhs-status');
-  if(statusEl){statusEl.style.display='block';statusEl.style.color='var(--primary)';statusEl.textContent='⏳ 正在提取笔记内容...'}
+  var ta=document.getElementById('wl-edit-guide');
+  if(!ta)return;
   try{
-    var proxyUrl='https://api.allorigins.win/raw?url='+encodeURIComponent(url);
-    var resp=await fetch(proxyUrl,{signal:AbortSignal.timeout?AbortSignal.timeout(15000):undefined});
-    if(!resp.ok)throw new Error('HTTP '+resp.status);
-    var html=await resp.text();
-    var content='';
-    var titleMatch=html.match(/<meta[^>]+(?:property|name)=["']og:title["'][^>]+content=["']([^"']+)["']/i);
-    var descMatch=html.match(/<meta[^>]+(?:property|name)=["](?:og:description|description)["'][^>]+content=["']([^"']+)["']/i);
-    if(titleMatch)content+=titleMatch[1]+'\n\n';
-    if(descMatch)content+=descMatch[1];
-    if(!content){
-      var noteMatch=html.match(/"desc":"((?:[^"\\]|\\.)*)"/);
-      if(noteMatch)content=noteMatch[1];
-    }
-    if(content){
-      content=content.replace(/\\n/g,'\n').replace(/\\u002F/g,'/').replace(/\\"/g,'"').replace(/\\t/g,'  ');
-      var ta=document.getElementById('wl-edit-guide');
-      if(ta){
-        ta.value=content;
-        if(statusEl){statusEl.style.color='var(--primary)';statusEl.textContent='✅ 笔记内容已提取，可编辑修改'}
-        showToast('✅ 笔记内容已提取');
+    if(navigator.clipboard&&navigator.clipboard.readText){
+      var text=await navigator.clipboard.readText();
+      if(!text){
+        if(statusEl){statusEl.style.display='block';statusEl.style.color='var(--warning)';statusEl.textContent='⚠️ 剪贴板为空，请先在小红书App中复制笔记文字'}
+        showToast('剪贴板为空','error');
+        return;
       }
+      var cleaned=cleanNoteContent(text);
+      ta.value=cleaned;
+      if(statusEl){statusEl.style.display='block';statusEl.style.color='var(--primary)';statusEl.textContent='✅ 已粘贴并整理笔记内容，可编辑修改'}
+      showToast('✅ 已粘贴笔记内容');
     }else{
-      if(statusEl){statusEl.style.color='var(--warning)';statusEl.textContent='⚠️ 未能自动提取，请手动粘贴笔记内容'}
-      showToast('⚠️ 未能自动提取，请手动粘贴','error');
+      if(statusEl){statusEl.style.display='block';statusEl.style.color='var(--warning)';statusEl.textContent='⚠️ 当前浏览器不支持自动粘贴，请手动长按下方文本框选择「粘贴」'}
+      showToast('请手动粘贴','error');
+      ta.focus();
     }
   }catch(e){
-    if(statusEl){statusEl.style.color='var(--danger)';statusEl.textContent='⚠️ 提取失败，请手动复制笔记内容粘贴到下方'}
-    showToast('⚠️ 提取失败，请手动粘贴','error');
+    if(statusEl){statusEl.style.display='block';statusEl.style.color='var(--warning)';statusEl.textContent='⚠️ 无法自动读取剪贴板，请手动长按下方文本框选择「粘贴」'}
+    showToast('请手动长按文本框粘贴','error');
+    ta.focus();
   }
+}
+
+function clearGuideText(){
+  var ta=document.getElementById('wl-edit-guide');
+  if(ta){ta.value='';ta.focus()}
+}
+
+function cleanNoteContent(text){
+  if(!text)return '';
+  var lines=text.split(/\r?\n/);
+  var cleaned=[];
+  var prevEmpty=false;
+  for(var i=0;i<lines.length;i++){
+    var line=lines[i].trim();
+    if(!line){
+      if(!prevEmpty&&cleaned.length>0){cleaned.push('');prevEmpty=true}
+      continue;
+    }
+    prevEmpty=false;
+    line=line.replace(/^[\s\u2022\u00b7\u25aa\u25b8\u25b6\u2192\-\*]+/,'');
+    line=line.replace(/#[^#\s]+#?$/g,'').trim();
+    line=line.replace(/\s{3,}/g,' ');
+    if(line.length===0)continue;
+    if(line.match(/^[\u5173\u6ce8\u70b9\u8d5e\u6536\u85cf\u8bc4\u8bba\u5206\u4eab\u4e3e\u62a5\u67e5\u770b\u66f4\u591a\u5c55\u5f00\u4e0b\u8f7d\u5c0f\u7ea2\u4e66]+/))continue;
+    if(line.match(/^@\S+\s*$/))continue;
+    cleaned.push(line);
+  }
+  return cleaned.join('\n').trim();
 }
 
 function saveWishlistEdit(id){
