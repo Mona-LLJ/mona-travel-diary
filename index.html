@@ -359,6 +359,17 @@ font-size:14px;cursor:pointer;font-weight:600;transition:all .2s;
 .weather-detail-label{font-size:10px;color:var(--text-muted)}
 .weather-detail-value{font-size:13px;font-weight:700;color:var(--text)}
 .weather-uv-low{color:#4CAF50}.weather-uv-mid{color:#FF9800}.weather-uv-high{color:#F44336}
+/* Hourly weather */
+.weather-hourly{display:flex;gap:4px;overflow-x:auto;padding-bottom:4px;-webkit-overflow-scrolling:touch}
+.weather-hour{flex-shrink:0;width:46px;text-align:center;padding:6px 2px;border-radius:8px;background:rgba(255,255,255,.5)}
+.weather-hour.now{background:var(--primary-lightest);border:1.5px solid var(--primary-light)}
+.weather-hour-time{font-size:10px;color:var(--text-muted);margin-bottom:2px}
+.weather-hour-icon{font-size:18px;margin-bottom:2px;line-height:1}
+.weather-hour-temp{font-size:12px;font-weight:700;color:var(--text)}
+.weather-current{display:flex;align-items:center;gap:12px;margin-bottom:10px}
+.weather-current-icon{font-size:36px;line-height:1}
+.weather-current-temp{font-size:28px;font-weight:800;color:var(--text)}
+.weather-current-desc{font-size:12px;color:var(--text-muted)}
 
 /* ===== HOTEL & TRANSPORT ===== */
 .info-block{background:rgba(255,255,255,.72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.4);border-radius:var(--radius);padding:14px;margin-bottom:12px;box-shadow:var(--shadow)}
@@ -724,7 +735,7 @@ display:flex;align-items:center;gap:6px;
 .map-search-bar input:focus{border-color:var(--primary-light)}
 .map-search-bar button{background:var(--primary-mid);color:#fff;border:none;width:42px;border-radius:var(--radius-sm);font-size:16px;cursor:pointer;transition:all .2s}
 .map-search-bar button:active{transform:scale(.92)}
-.map-search-results{background:rgba(255,255,255,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);max-height:200px;overflow-y:auto;margin-bottom:8px;display:none;border:1px solid var(--border)}
+.map-search-results{background:rgba(255,255,255,.95);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);max-height:200px;overflow-y:auto;margin-bottom:8px;display:none;border:1px solid var(--border);position:relative;z-index:500}
 .map-search-results.show{display:block}
 .map-search-result{padding:10px 14px;border-bottom:1px solid var(--primary-lightest);cursor:pointer;font-size:13px;color:var(--text-body);transition:background .15s}
 .map-search-result:hover,.map-search-result:active{background:var(--primary-lightest)}
@@ -1225,8 +1236,66 @@ function deleteFootprint(id){
   });
 }
 
-// ----- Address Search (Nominatim) -----
-async function searchAddressOnMap(){
+// ----- Address Search (Photon + Nominatim fallback) -----
+function searchPlaces(query,callback){
+  var results=[];
+  var done=false;
+  var timeout=setTimeout(function(){
+    if(!done){done=true;callback(results.length>0?results:null,'搜索超时，请重试')}
+  },10000);
+  // Try Photon first (faster, better CORS)
+  fetch('https://photon.komoot.io/api/?q='+encodeURIComponent(query)+'&limit=5&lang=zh')
+    .then(function(r){return r.json()})
+    .then(function(data){
+      if(done)return;
+      if(data&&data.features){
+        results=data.features.map(function(f){
+          var p=f.properties||{};
+          var name=p.name||p.city||p.state||'未知';
+          var addrParts=[];
+          if(p.name)addrParts.push(p.name);
+          if(p.city&&p.city!==name)addrParts.push(p.city);
+          if(p.state)addrParts.push(p.state);
+          if(p.country)addrParts.push(p.country);
+          return{name:name,address:addrParts.join(', '),lat:f.geometry.coordinates[1],lng:f.geometry.coordinates[0]};
+        });
+      }
+      if(results.length>0){
+        done=true;clearTimeout(timeout);callback(results,null);
+      }else{
+        // No Photon results, try Nominatim
+        tryNominatim(query,function(nResults,nErr){
+          if(done)return;
+          done=true;clearTimeout(timeout);
+          callback(nResults,nErr);
+        });
+      }
+    })
+    .catch(function(){
+      if(done)return;
+      tryNominatim(query,function(nResults,nErr){
+        if(done)return;
+        done=true;clearTimeout(timeout);
+        callback(nResults,nErr);
+      });
+    });
+  function tryNominatim(q,cb){
+    fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(q)+'&format=json&limit=5&addressdetails=1&accept-language=zh')
+      .then(function(r){return r.json()})
+      .then(function(data){
+        if(data&&data.length>0){
+          var nResults=data.map(function(r){
+            var name=r.name||(r.display_name?r.display_name.split(',')[0]:'未知');
+            return{name:name,address:r.display_name||'',lat:parseFloat(r.lat),lng:parseFloat(r.lon)};
+          });
+          cb(nResults,null);
+        }else{cb(null,'未找到结果')}
+      })
+      .catch(function(){cb(null,'搜索失败')});
+  }
+}
+
+function searchAddressOnMap(){
   var input=document.getElementById('map-search-input');
   var resultsEl=document.getElementById('map-search-results');
   if(!input||!resultsEl)return;
@@ -1234,15 +1303,13 @@ async function searchAddressOnMap(){
   if(!query){resultsEl.classList.remove('show');return}
   resultsEl.classList.add('show');
   resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">🔍 搜索中...</div>';
-  try{
-    var resp=await fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(query)+'&format=json&limit=5&addressdetails=1&accept-language=zh');
-    var results=await resp.json();
-    if(!results||results.length===0){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">未找到结果</div>';return}
+  searchPlaces(query,function(results,err){
+    if(!resultsEl||!resultsEl.parentNode)return;
+    if(err||!results||results.length===0){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">'+(err||'未找到结果')+'</div>';return}
     resultsEl.innerHTML=results.map(function(r){
-      var name=r.name||(r.display_name?r.display_name.split(',')[0]:'未知');
-      return '<div class="map-search-result" data-lat="'+r.lat+'" data-lng="'+r.lon+'" data-name="'+escapeHtml(name)+'" onclick="selectMapSearchResult(this)"><div class="map-search-result-name">'+escapeHtml(name)+'</div><div class="map-search-result-addr">'+escapeHtml(r.display_name||'')+'</div></div>';
+      return '<div class="map-search-result" data-lat="'+r.lat+'" data-lng="'+r.lng+'" data-name="'+escapeHtml(r.name)+'" onclick="selectMapSearchResult(this)"><div class="map-search-result-name">'+escapeHtml(r.name)+'</div><div class="map-search-result-addr">'+escapeHtml(r.address||'')+'</div></div>';
     }).join('');
-  }catch(e){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">搜索失败，请检查网络</div>'}
+  });
 }
 
 function selectMapSearchResult(el){
@@ -1253,13 +1320,11 @@ function selectMapSearchResult(el){
   if(resultsEl)resultsEl.classList.remove('show');
   var input=document.getElementById('map-search-input');
   if(input)input.value='';
-  // Pan map
   if(map){map.setView([lat,lng],14)}
-  // Open add footprint modal with pre-filled data
   showAddFootprintModal({lat:lat,lng:lng},name);
 }
 
-async function searchInFootprintModal(){
+function searchInFootprintModal(){
   var input=document.getElementById('fp-search');
   var resultsEl=document.getElementById('fp-search-results');
   if(!input||!resultsEl)return;
@@ -1267,15 +1332,13 @@ async function searchInFootprintModal(){
   if(!query){resultsEl.classList.remove('show');return}
   resultsEl.classList.add('show');
   resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">🔍 搜索中...</div>';
-  try{
-    var resp=await fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(query)+'&format=json&limit=5&addressdetails=1&accept-language=zh');
-    var results=await resp.json();
-    if(!results||results.length===0){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">未找到结果</div>';return}
+  searchPlaces(query,function(results,err){
+    if(!resultsEl||!resultsEl.parentNode)return;
+    if(err||!results||results.length===0){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">'+(err||'未找到结果')+'</div>';return}
     resultsEl.innerHTML=results.map(function(r){
-      var name=r.name||(r.display_name?r.display_name.split(',')[0]:'未知');
-      return '<div class="map-search-result" data-lat="'+r.lat+'" data-lng="'+r.lon+'" data-name="'+escapeHtml(name)+'" onclick="selectFootprintSearchResult(this)"><div class="map-search-result-name">'+escapeHtml(name)+'</div><div class="map-search-result-addr">'+escapeHtml(r.display_name||'')+'</div></div>';
+      return '<div class="map-search-result" data-lat="'+r.lat+'" data-lng="'+r.lng+'" data-name="'+escapeHtml(r.name)+'" onclick="selectFootprintSearchResult(this)"><div class="map-search-result-name">'+escapeHtml(r.name)+'</div><div class="map-search-result-addr">'+escapeHtml(r.address||'')+'</div></div>';
     }).join('');
-  }catch(e){resultsEl.innerHTML='<div style="padding:10px;color:var(--text-muted);font-size:12px">搜索失败，请检查网络</div>'}
+  });
 }
 
 function selectFootprintSearchResult(el){
@@ -1788,82 +1851,108 @@ function fetchWeatherByCoords(lat,lng,cityName,callback){
   }).catch(function(err){callback(null,'网络错误');});
 }
 
-function renderWeatherCard(trip){
+function getIPLocation(callback){
+  fetch('https://get.geojs.io/v1/ip/geo.json').then(function(r){return r.json()}).then(function(data){
+    if(data&&data.latitude&&data.longitude){
+      var city=data.city||data.region||'当前位置';
+      callback({lat:parseFloat(data.latitude),lng:parseFloat(data.longitude),city:city});
+    }else{callback(null)}
+  }).catch(function(){callback(null)});
+}
+
+function fetchWeatherHourly(cityName,callback){
+  if(!cityName){callback(null);return}
+  var cacheKey='hourly_'+cityName;
+  var cached=weatherCache[cacheKey];
+  if(cached&&Date.now()-cached.timestamp<30*60*1000){callback(cached.data);return}
+  var geoUrl='https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(cityName)+'&count=1&language=zh&format=json';
+  fetch(geoUrl).then(function(r){return r.json()}).then(function(geo){
+    if(!geo.results||geo.results.length===0){callback(null,'找不到城市「'+cityName+'」');return}
+    var loc=geo.results[0];
+    var wUrl='https://api.open-meteo.com/v1/forecast?latitude='+loc.latitude+'&longitude='+loc.longitude+'&hourly=temperature_2m,relative_humidity_2m,uv_index,weather_code,precipitation_probability&daily=temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max&timezone=auto&forecast_days=1';
+    return fetch(wUrl).then(function(r){return r.json()});
+  }).then(function(w){
+    if(!w||!w.hourly){callback(null);return}
+    var now=new Date();
+    var currentHour=now.getHours();
+    var hourlyData=[];
+    for(var i=currentHour;i<Math.min(currentHour+9,w.hourly.time.length);i++){
+      var wc=getWeatherIcon(w.hourly.weather_code[i]||0);
+      hourlyData.push({hour:i,temp:Math.round(w.hourly.temperature_2m[i]||0),humidity:Math.round(w.hourly.relative_humidity_2m[i]||0),uv:w.hourly.uv_index[i]!=null?Math.round(w.hourly.uv_index[i]):0,icon:wc.icon,label:wc.label,rainProb:w.hourly.precipitation_probability[i]!=null?w.hourly.precipitation_probability[i]:0});
+    }
+    var currentTemp=w.hourly.temperature_2m[currentHour]!=null?Math.round(w.hourly.temperature_2m[currentHour]):0;
+    var currentHumidity=w.hourly.relative_humidity_2m[currentHour]!=null?Math.round(w.hourly.relative_humidity_2m[currentHour]):0;
+    var currentUV=w.hourly.uv_index[currentHour]!=null?Math.round(w.hourly.uv_index[currentHour]):0;
+    var currentWC=getWeatherIcon(w.hourly.weather_code[currentHour]||0);
+    var data={city:cityName,hourly:hourlyData,
+      current:{temp:currentTemp,humidity:currentHumidity,uv:currentUV,icon:currentWC.icon,label:currentWC.label},
+      daily:{tempMax:w.daily.temperature_2m_max[0]!=null?Math.round(w.daily.temperature_2m_max[0]):0,tempMin:w.daily.temperature_2m_min[0]!=null?Math.round(w.daily.temperature_2m_min[0]):0,uvMax:w.daily.uv_index_max[0]!=null?Math.round(w.daily.uv_index_max[0]):0,rainProbMax:w.daily.precipitation_probability_max[0]!=null?w.daily.precipitation_probability_max[0]:0}
+    };
+    weatherCache[cacheKey]={data:data,timestamp:Date.now()};
+    callback(data);
+  }).catch(function(err){callback(null,'网络错误');});
+}
+
+function renderTripWeatherDetail(trip){
   if(!trip.destination)return'';
-  var today=new Date();var ds=today.getFullYear()+'-'+p(today.getMonth()+1)+'-'+p(today.getDate());
   var id='weather-'+trip.id;
-  // Render placeholder, then fetch async
   setTimeout(function(){
     var el=document.getElementById(id);
     if(!el)return;
     el.innerHTML='<div class="weather-loading">🌦️ 正在获取'+escapeHtml(trip.destination)+'的天气...</div>';
-    fetchWeather(trip.destination,function(data,err){
+    fetchWeatherHourly(trip.destination,function(data,err){
       var e=document.getElementById(id);
       if(!e)return;
       if(err){e.innerHTML='<div class="weather-error">⚠️ '+err+'</div>';return}
       if(!data){e.innerHTML='<div class="weather-error">暂无天气数据</div>';return}
-      var html='<div class="weather-header"><div class="weather-title">🌦️ '+escapeHtml(data.city)+'天气</div><button class="weather-refresh" onclick="refreshWeather(\''+trip.id+'\')">🔄 刷新</button></div>';
-      html+='<div class="weather-days">';
-      data.daily.forEach(function(d,i){
-        var isToday=d.date===ds;
-        var dt=new Date(d.date);
-        var dayLabel=isToday?'今天':(dt.getMonth()+1)+'/'+dt.getDate();
-        html+='<div class="weather-day'+(isToday?' today':'')+'">';
-        html+='<div class="weather-day-date">'+dayLabel+'</div>';
-        html+='<div class="weather-day-icon">'+d.icon+'</div>';
-        html+='<div class="weather-day-temp">'+d.tempMax+'°</div>';
-        html+='<div class="weather-day-range">'+d.tempMin+'°~'+d.tempMax+'°</div>';
-        html+='</div>';
+      var html='<div class="weather-header"><div class="weather-title">🌦️ '+escapeHtml(data.city)+' 今日天气</div><button class="weather-refresh" onclick="refreshTripWeather(\''+trip.id+'\')">🔄 刷新</button></div>';
+      // Current conditions
+      html+='<div class="weather-current"><div class="weather-current-icon">'+data.current.icon+'</div><div><div class="weather-current-temp">'+data.current.temp+'°C</div><div class="weather-current-desc">'+data.current.label+'</div></div></div>';
+      // Hourly forecast
+      html+='<div class="weather-hourly">';
+      data.hourly.forEach(function(h,i){
+        html+='<div class="weather-hour'+(i===0?' now':'')+'"><div class="weather-hour-time">'+(i===0?'现在':h.hour+':00')+'</div><div class="weather-hour-icon">'+h.icon+'</div><div class="weather-hour-temp">'+h.temp+'°</div></div>';
       });
       html+='</div>';
-      // Today's details
-      var todayData=data.daily[0]||data.daily.find(function(d){return d.date===ds})||data.daily[0];
-      if(todayData){
-        var uv=getUVLevel(todayData.uv);
-        html+='<div class="weather-detail">';
-        html+='<div class="weather-detail-item"><div class="weather-detail-icon">🌡️</div><div class="weather-detail-label">温度</div><div class="weather-detail-value">'+todayData.tempMin+'°~'+todayData.tempMax+'°</div></div>';
-        html+='<div class="weather-detail-item"><div class="weather-detail-icon">☀️</div><div class="weather-detail-label">紫外线</div><div class="weather-detail-value '+uv.cls+'">'+todayData.uv+' '+uv.text+'</div></div>';
-        html+='<div class="weather-detail-item"><div class="weather-detail-icon">💧</div><div class="weather-detail-label">降水概率</div><div class="weather-detail-value">'+todayData.rainProb+'%</div></div>';
-        html+='<div class="weather-detail-item"><div class="weather-detail-icon">💨</div><div class="weather-detail-label">风速</div><div class="weather-detail-value">'+todayData.windSpeed+'km/h</div></div>';
-        html+='</div>';
-      }
+      // Details
+      var uv=getUVLevel(data.current.uv);
+      html+='<div class="weather-detail">';
+      html+='<div class="weather-detail-item"><div class="weather-detail-icon">🌡️</div><div class="weather-detail-label">温度范围</div><div class="weather-detail-value">'+data.daily.tempMin+'°~'+data.daily.tempMax+'°</div></div>';
+      html+='<div class="weather-detail-item"><div class="weather-detail-icon">💧</div><div class="weather-detail-label">湿度</div><div class="weather-detail-value">'+data.current.humidity+'%</div></div>';
+      html+='<div class="weather-detail-item"><div class="weather-detail-icon">☀️</div><div class="weather-detail-label">紫外线</div><div class="weather-detail-value '+uv.cls+'">'+data.current.uv+' '+uv.text+'</div></div>';
+      html+='<div class="weather-detail-item"><div class="weather-detail-icon">🌧️</div><div class="weather-detail-label">降水概率</div><div class="weather-detail-value">'+data.daily.rainProbMax+'%</div></div>';
+      html+='</div>';
       e.innerHTML=html;
     });
   },50);
   return '<div class="weather-card" id="'+id+'"><div class="weather-loading">🌦️ 正在获取天气...</div></div>';
 }
 
-function refreshWeather(tripId){
+function refreshTripWeather(tripId){
   var trip=state.trips.find(function(t){return t.id===tripId});
   if(!trip||!trip.destination)return;
-  delete weatherCache[trip.destination];
+  delete weatherCache['hourly_'+trip.destination];
   var el=document.getElementById('weather-'+tripId);
   if(el)el.innerHTML='<div class="weather-loading">🔄 刷新中...</div>';
-  fetchWeather(trip.destination,function(data,err){
+  fetchWeatherHourly(trip.destination,function(data,err){
     var e=document.getElementById('weather-'+tripId);
     if(!e)return;
     if(err){e.innerHTML='<div class="weather-error">⚠️ '+err+'</div>';return}
     if(!data){e.innerHTML='<div class="weather-error">暂无天气数据</div>';return}
-    var today=new Date();var ds=today.getFullYear()+'-'+p(today.getMonth()+1)+'-'+p(today.getDate());
-    var html='<div class="weather-header"><div class="weather-title">🌦️ '+escapeHtml(data.city)+'天气</div><button class="weather-refresh" onclick="refreshWeather(\''+trip.id+'\')">🔄 刷新</button></div>';
-    html+='<div class="weather-days">';
-    data.daily.forEach(function(d){
-      var isToday=d.date===ds;
-      var dt=new Date(d.date);
-      var dayLabel=isToday?'今天':(dt.getMonth()+1)+'/'+dt.getDate();
-      html+='<div class="weather-day'+(isToday?' today':'')+'"><div class="weather-day-date">'+dayLabel+'</div><div class="weather-day-icon">'+d.icon+'</div><div class="weather-day-temp">'+d.tempMax+'°</div><div class="weather-day-range">'+d.tempMin+'°~'+d.tempMax+'°</div></div>';
+    var html='<div class="weather-header"><div class="weather-title">🌦️ '+escapeHtml(data.city)+' 今日天气</div><button class="weather-refresh" onclick="refreshTripWeather(\''+trip.id+'\')">🔄 刷新</button></div>';
+    html+='<div class="weather-current"><div class="weather-current-icon">'+data.current.icon+'</div><div><div class="weather-current-temp">'+data.current.temp+'°C</div><div class="weather-current-desc">'+data.current.label+'</div></div></div>';
+    html+='<div class="weather-hourly">';
+    data.hourly.forEach(function(h,i){
+      html+='<div class="weather-hour'+(i===0?' now':'')+'"><div class="weather-hour-time">'+(i===0?'现在':h.hour+':00')+'</div><div class="weather-hour-icon">'+h.icon+'</div><div class="weather-hour-temp">'+h.temp+'°</div></div>';
     });
     html+='</div>';
-    var todayData=data.daily[0]||data.daily.find(function(d){return d.date===ds})||data.daily[0];
-    if(todayData){
-      var uv=getUVLevel(todayData.uv);
-      html+='<div class="weather-detail">';
-      html+='<div class="weather-detail-item"><div class="weather-detail-icon">🌡️</div><div class="weather-detail-label">温度</div><div class="weather-detail-value">'+todayData.tempMin+'°~'+todayData.tempMax+'°</div></div>';
-      html+='<div class="weather-detail-item"><div class="weather-detail-icon">☀️</div><div class="weather-detail-label">紫外线</div><div class="weather-detail-value '+uv.cls+'">'+todayData.uv+' '+uv.text+'</div></div>';
-      html+='<div class="weather-detail-item"><div class="weather-detail-icon">💧</div><div class="weather-detail-label">降水概率</div><div class="weather-detail-value">'+todayData.rainProb+'%</div></div>';
-      html+='<div class="weather-detail-item"><div class="weather-detail-icon">💨</div><div class="weather-detail-label">风速</div><div class="weather-detail-value">'+todayData.windSpeed+'km/h</div></div>';
-      html+='</div>';
-    }
+    var uv=getUVLevel(data.current.uv);
+    html+='<div class="weather-detail">';
+    html+='<div class="weather-detail-item"><div class="weather-detail-icon">🌡️</div><div class="weather-detail-label">温度范围</div><div class="weather-detail-value">'+data.daily.tempMin+'°~'+data.daily.tempMax+'°</div></div>';
+    html+='<div class="weather-detail-item"><div class="weather-detail-icon">💧</div><div class="weather-detail-label">湿度</div><div class="weather-detail-value">'+data.current.humidity+'%</div></div>';
+    html+='<div class="weather-detail-item"><div class="weather-detail-icon">☀️</div><div class="weather-detail-label">紫外线</div><div class="weather-detail-value '+uv.cls+'">'+data.current.uv+' '+uv.text+'</div></div>';
+    html+='<div class="weather-detail-item"><div class="weather-detail-icon">🌧️</div><div class="weather-detail-label">降水概率</div><div class="weather-detail-value">'+data.daily.rainProbMax+'%</div></div>';
+    html+='</div>';
     e.innerHTML=html;
     showToast('🌦️ 天气已刷新');
   });
@@ -1871,53 +1960,55 @@ function refreshWeather(tripId){
 
 // ==================== HOME WEATHER ====================
 function renderHomeWeather(){
-  // Find next/ongoing trip for destination weather
-  var nextTrip=null,minDays=Infinity;
-  state.trips.forEach(function(t){
-    var status=getTripStatus(t);
-    if(status==='upcoming'||status==='ongoing'){
-      var d=daysUntil(t.startDate);if(d<minDays){minDays=d;nextTrip=t}
-    }
-  });
   var html='<div style="margin-bottom:16px"><div class="card-title"><span class="emoji">🌦️</span> 天气信息</div>';
-  html+='<div class="home-weather-row">';
-  // Left: current location
-  html+='<div class="home-weather-col"><div class="weather-card" id="hw-local" style="padding:12px"><div class="weather-loading" style="padding:12px;font-size:12px">📍 定位中...</div></div></div>';
-  // Right: trip destination
-  if(nextTrip&&nextTrip.destination){
-    html+='<div class="home-weather-col"><div class="weather-card" id="hw-trip" style="padding:12px"><div class="weather-loading" style="padding:12px;font-size:12px">✈️ 加载中...</div></div></div>';
-  }else{
-    html+='<div class="home-weather-col"><div class="weather-card" style="padding:12px"><div style="text-align:center;padding:12px;color:var(--text-muted);font-size:11px;line-height:1.6">✈️<br>添加行程后<br>显示目的地天气</div></div></div>';
-  }
-  html+='</div></div>';
-  // Async fetch
+  html+='<div class="weather-card" id="hw-local" style="padding:14px"><div class="weather-loading">📍 定位中...</div></div>';
+  html+='</div>';
   setTimeout(function(){
-    // Current location via geolocation
-    if(navigator.geolocation){
-      navigator.geolocation.getCurrentPosition(function(pos){
-        var lat=pos.coords.latitude,lng=pos.coords.longitude;
-        fetch('https://nominatim.openstreetmap.org/reverse?lat='+lat+'&lon='+lng+'&format=json&accept-language=zh&zoom=10')
-          .then(function(r){return r.json()})
-          .then(function(geo){
-            var cn='当前位置';
-            if(geo&&geo.address){cn=geo.address.city||geo.address.town||geo.address.county||geo.address.state||'当前位置'}
-            fetchWeatherByCoords(lat,lng,cn,function(data,err){renderHomeWeatherCol('hw-local',data,err,cn)});
-          })
-          .catch(function(){
-            fetchWeatherByCoords(lat,lng,'当前位置',function(data,err){renderHomeWeatherCol('hw-local',data,err,'当前位置')});
-          });
-      },function(){
-        var el=document.getElementById('hw-local');
-        if(el)el.innerHTML='<div class="weather-error" style="padding:12px">⚠️ 无法获取定位<br><span style="font-size:10px">请检查定位权限</span></div>';
-      },{timeout:8000});
-    }else{
-      var el=document.getElementById('hw-local');
-      if(el)el.innerHTML='<div class="weather-error" style="padding:12px">⚠️ 设备不支持定位</div>';
-    }
-    // Trip destination
-    if(nextTrip&&nextTrip.destination){
-      fetchWeather(nextTrip.destination,function(data,err){renderHomeWeatherCol('hw-trip',data,err,nextTrip.destination)});
-    }
+    var el=document.getElementById('hw-local');
+    if(!el)return;
+    // Strategy: Try IP geolocation first (instant), then try GPS for accuracy
+    var done=false;
+    // 1. IP geolocation (fast, no permission needed)
+    getIPLocation(function(ipLoc){
+      if(done)return;
+      if(ipLoc){
+        done=true;
+        fetchWeatherByCoords(ipLoc.lat,ipLoc.lng,ipLoc.city,function(data,err){
+          renderHomeWeatherCol('hw-local',data,err,ipLoc.city);
+        });
+        // Also try GPS in background to potentially update with more accurate location
+        if(navigator.geolocation){
+          navigator.geolocation.getCurrentPosition(function(pos){
+            var lat=pos.coords.latitude,lng=pos.coords.longitude;
+            // Only update if GPS location is significantly different
+            var dist=Math.abs(lat-ipLoc.lat)+Math.abs(lng-ipLoc.lng);
+            if(dist>0.1){
+              fetchWeatherByCoords(lat,lng,'当前位置',function(data,err){
+                renderHomeWeatherCol('hw-local',data,err,'当前位置');
+              });
+            }
+          },function(){/* GPS failed, IP result is fine */},{timeout:5000,maximumAge:300000});
+        }
+      }else{
+        // IP failed, try GPS directly
+        if(navigator.geolocation){
+          navigator.geolocation.getCurrentPosition(function(pos){
+            if(done)return;done=true;
+            var lat=pos.coords.latitude,lng=pos.coords.longitude;
+            fetchWeatherByCoords(lat,lng,'当前位置',function(data,err){
+              renderHomeWeatherCol('hw-local',data,err,'当前位置');
+            });
+          },function(){
+            if(done)return;done=true;
+            var e=document.getElementById('hw-local');
+            if(e)e.innerHTML='<div class="weather-error">⚠️ 无法获取定位<br><span style="font-size:10px">请检查定位权限或网络连接</span></div>';
+          },{timeout:5000,maximumAge:300000});
+        }else{
+          done=true;
+          el.innerHTML='<div class="weather-error">⚠️ 设备不支持定位</div>';
+        }
+      }
+    });
   },100);
   return html;
 }
@@ -1925,20 +2016,43 @@ function renderHomeWeather(){
 function renderHomeWeatherCol(elId,data,err,cityName){
   var el=document.getElementById(elId);
   if(!el)return;
-  if(err){el.innerHTML='<div class="weather-error" style="padding:12px">⚠️ '+err+'</div>';return}
-  if(!data){el.innerHTML='<div class="weather-error" style="padding:12px">暂无数据</div>';return}
+  if(err){el.innerHTML='<div class="weather-error">⚠️ '+err+'</div>';return}
+  if(!data){el.innerHTML='<div class="weather-error">暂无数据</div>';return}
   var today=new Date();var ds=today.getFullYear()+'-'+p(today.getMonth()+1)+'-'+p(today.getDate());
-  var icon=elId==='hw-local'?'📍':'✈️';
-  var html='<div style="font-size:12px;font-weight:700;color:var(--text);margin-bottom:6px;display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+icon+' '+escapeHtml(cityName||data.city)+'</div>';
-  html+='<div class="hw-days">';
+  var html='<div class="weather-header"><div class="weather-title">📍 '+escapeHtml(cityName||data.city)+'</div><button class="weather-refresh" onclick="refreshHomeWeather()">🔄 刷新</button></div>';
+  html+='<div class="weather-days">';
   data.daily.forEach(function(d){
     var isToday=d.date===ds;
     var dt=new Date(d.date);
     var dayLabel=isToday?'今天':(dt.getMonth()+1)+'/'+dt.getDate();
-    html+='<div class="hw-day'+(isToday?' today':'')+'"><div class="hw-day-date">'+dayLabel+'</div><div class="hw-day-icon">'+d.icon+'</div><div class="hw-day-temp">'+d.tempMax+'°/'+d.tempMin+'°</div></div>';
+    html+='<div class="weather-day'+(isToday?' today':'')+'"><div class="weather-day-date">'+dayLabel+'</div><div class="weather-day-icon">'+d.icon+'</div><div class="weather-day-temp">'+d.tempMax+'°</div><div class="weather-day-range">'+d.tempMin+'°~'+d.tempMax+'°</div></div>';
   });
   html+='</div>';
   el.innerHTML=html;
+}
+
+function refreshHomeWeather(){
+  weatherCache={};
+  var el=document.getElementById('hw-local');
+  if(el)el.innerHTML='<div class="weather-loading">🔄 刷新中...</div>';
+  getIPLocation(function(ipLoc){
+    if(ipLoc){
+      fetchWeatherByCoords(ipLoc.lat,ipLoc.lng,ipLoc.city,function(data,err){
+        renderHomeWeatherCol('hw-local',data,err,ipLoc.city);
+      });
+    }else{
+      if(navigator.geolocation){
+        navigator.geolocation.getCurrentPosition(function(pos){
+          fetchWeatherByCoords(pos.coords.latitude,pos.coords.longitude,'当前位置',function(data,err){
+            renderHomeWeatherCol('hw-local',data,err,'当前位置');
+          });
+        },function(){
+          if(el)el.innerHTML='<div class="weather-error">⚠️ 无法获取定位</div>';
+        },{timeout:5000});
+      }
+    }
+  });
+  showToast('🌦️ 天气已刷新');
 }
 
 // ==================== TRIPS ====================
@@ -2038,9 +2152,9 @@ function renderTripDetail(id){
   }
   html+='</div>';
 
-  // Weather card
+  // Weather card (hourly for today)
   if(trip.destination){
-    html+=renderWeatherCard(trip);
+    html+=renderTripWeatherDetail(trip);
   }
 
   // Hotel (multiple, like transport)
@@ -2103,8 +2217,6 @@ function renderTripDetail(id){
         html+='<div class="activity-item"><div class="activity-time">'+(a.time||'--:--')+'</div><div class="activity-icon">'+at.icon+'</div><div class="activity-content"><div class="activity-title">'+escapeHtml(a.title)+'</div>'+(a.desc?'<div class="activity-desc">'+escapeHtml(a.desc)+'</div>':'')+(a.cost?'<div class="activity-cost">¥'+a.cost+'</div>':'');
         if(a.img){
           html+='<img class="activity-img" src="'+a.img+'" onclick="event.stopPropagation();viewImg(\''+a.id+'\',\''+ds+'\')" alt="'+escapeHtml(a.title)+'">';
-        }else{
-          html+='<div class="activity-img-placeholder" onclick="event.stopPropagation();uploadActivityImg(\''+trip.id+'\',\''+ds+'\',\''+a.id+'\')">📷 添加图片</div>';
         }
         html+='</div><div class="activity-actions"><button onclick="showActivityEditor(\''+trip.id+'\',\''+ds+'\',\''+a.id+'\')">✏️</button><button onclick="deleteActivity(\''+trip.id+'\',\''+ds+'\',\''+a.id+'\')">🗑</button></div></div>';
       });
@@ -2237,7 +2349,7 @@ function showActivityEditor(tripId,dateStr,activityId){
     '<div class="form-group"><label>标题</label><input type="text" id="act-title" class="form-input" placeholder="如：故宫博物院" value="'+escapeHtml(a?a.title||'':'')+'"></div>'+
     '<div class="form-row"><div class="form-group"><label>时间</label><input type="time" id="act-time" class="form-input" value="'+(a?a.time||'':'')+'"></div><div class="form-group"><label>花费 (¥)</label><input type="number" id="act-cost" class="form-input" placeholder="0" value="'+(a?a.cost||'':'')+'"></div></div>'+
     '<div class="form-group"><label>描述</label><textarea id="act-desc" class="form-input" placeholder="备注...">'+escapeHtml(a?a.desc||'':'')+'</textarea></div>'+
-    '<div class="form-group"><label>📷 景点图片</label>'+
+    '<div class="form-group"><label>📷 旅行图记</label>'+
     '<div id="act-img-preview">'+imgPreviewHtml+'</div>'+
     '<label class="avatar-upload-btn" onclick="document.getElementById(\'act-img-file\').click()">'+(a&&a.img?'📷 更换图片':'📷 上传图片')+'</label>'+
     '<input type="file" id="act-img-file" accept="image/*" style="display:none" onchange="uploadActImgEditor(event)">'+
@@ -2319,7 +2431,7 @@ function saveActivity(tripId,dateStr,activityId){
   if(!trip.itinerary[dateStr]) trip.itinerary[dateStr]=[];
   var data={type:document.getElementById('act-type').value,title:document.getElementById('act-title').value.trim(),time:document.getElementById('act-time').value,cost:parseFloat(document.getElementById('act-cost').value)||0,desc:document.getElementById('act-desc').value.trim()};
   var imgEl=document.getElementById('act-img');
-  if(imgEl&&imgEl.value){data.img=imgEl.value}
+  data.img=imgEl?imgEl.value:''; // always set img (even empty string) so removal works
   if(!data.title){showToast('请输入标题','error');return}
   if(activityId){
     var a=trip.itinerary[dateStr].find(function(x){return x.id===activityId});
@@ -2537,7 +2649,7 @@ function renderProfile(){
   html+='</div>';
   html+='<input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">';
   // About
-  html+='<div class="about-section"><div class="app-name">🐱 Mona 旅行日记</div><div>Version 2.1.0</div><div style="margin-top:4px">用心记录每一段旅程</div><div style="margin-top:8px;opacity:.6">💚 Made with love</div></div>';
+  html+='<div class="about-section"><div class="app-name">🐱 Mona 旅行日记</div><div>Version 2.2.0</div><div style="margin-top:4px">用心记录每一段旅程</div><div style="margin-top:8px;opacity:.6">💚 Made with love</div></div>';
   document.getElementById('tab-profile').innerHTML=html;
 }
 
