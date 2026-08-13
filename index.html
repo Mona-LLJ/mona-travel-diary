@@ -15,8 +15,7 @@
 <link rel="apple-touch-icon" sizes="192x192" href="icons/icon-192.png">
 <link rel="apple-touch-icon" sizes="512x512" href="icons/icon-512.png">
 <title>Mona 旅行日记</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
+<script charset="utf-8" src="https://map.qq.com/api/gljs?v=1.exp&key=CRRBZ-AQQY4-CKSUR-DQ7PL-ACUYZ-SGB7Y&libraries=service"></script>
 <style>
 *{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 :root{
@@ -765,10 +764,10 @@ border:2.5px solid var(--primary-mid);
 .marker-popup strong{color:var(--primary)}
 .marker-popup .popup-date{font-size:11px;color:var(--text-muted);margin-top:2px}
 
-/* ===== LEAFLET OVERRIDES ===== */
-.leaflet-popup-content-wrapper{border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.15)}
-.leaflet-popup-content{margin:10px 14px}
-.leaflet-bar a{border-radius:8px!important}
+/* ===== TMAP INFOWINDOW ===== */
+.tmap-infowindow{background:#fff;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:10px 14px;font-size:13px;max-width:200px}
+.tmap-infowindow strong{color:var(--primary);font-size:14px}
+.tmap-infowindow .popup-date{font-size:11px;color:var(--text-muted);margin-top:2px}
 </style>
 </head>
 <body>
@@ -922,7 +921,7 @@ var state = {
   trips:[],checklists:{},notes:{},footprints:[],wishlist:[],settings:{lastSync:null,github:{token:'',owner:'',repo:'literate-palm-tree',branch:'main',path:'data/mona-data.enc.json',password:'',autoSync:false,lastCloudSync:null,connected:false}}
 };
 var currentView = {tab:'home',tripDetail:null,checklistDetail:null,calYear:0,calMonth:0,selectedDate:null};
-var map = null, mapInitialized = false;
+var map = null, mapInitialized = false, markerLayer = null, infoWindow = null;
 var saveTimer = null, pendingConfirm = null;
 var weatherCache = {}; // {cityName: {data:..., timestamp:...}}
 
@@ -948,6 +947,15 @@ function loadState(){
       trip.hotel = null;
     }
     if(!trip.dayRoutes){trip.dayRoutes={}}
+  });
+  // Migrate existing footprints from WGS-84 to GCJ-02 for Tencent Maps
+  state.footprints.forEach(function(fp){
+    if(!fp.cs||fp.cs==='wgs84'){
+      var c=wgs84ToGcj02(fp.lng||0,fp.lat||0);
+      fp.lat=c[1];fp.lng=c[0];
+      if(fp.coords){fp.coords.lat=c[1];fp.coords.lng=c[0]}
+      fp.cs='gcj02';
+    }
   });
   if(!state.profile.themeColor){state.profile.themeColor='green'}
   if(!state.profile.deviceId){
@@ -1093,7 +1101,6 @@ function switchTab(tab){
     header.innerHTML='<span class="header-title">'+titles[tab]+'</span><div class="header-right">'+renderSyncBadge()+(showAdd[tab]?'<button class="header-btn" onclick="showTripEditor()">＋</button>':'')+'</div>';
   }
   renderTab(tab);
-  if(tab==='home'){ensureMap();setTimeout(function(){if(map)map.invalidateSize()},200)}
 }
 
 function renderTab(tab){
@@ -1181,57 +1188,79 @@ function scrollToMap(){
 }
 
 // ==================== MAP ====================
+// WGS-84 → GCJ-02 coordinate conversion (for migrating existing footprints)
+function wgs84ToGcj02(lng,lat){
+  if(lng<72.004||lng>137.8347||lat<0.8293||lat>55.8271)return[lng,lat];
+  var a=6378245.0,ee=0.00669342162296594323;
+  function tLat(x,y){var r=-100+2*x+3*y+0.2*y*y+0.1*x*y+0.2*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3;r+=(20*Math.sin(y*Math.PI)+40*Math.sin(y/3*Math.PI))*2/3;r+=(160*Math.sin(y/12*Math.PI)+320*Math.sin(y*Math.PI/30))*2/3;return r}
+  function tLng(x,y){var r=300+x+2*y+0.1*x*x+0.1*x*y+0.1*Math.sqrt(Math.abs(x));r+=(20*Math.sin(6*x*Math.PI)+20*Math.sin(2*x*Math.PI))*2/3;r+=(20*Math.sin(x*Math.PI)+40*Math.sin(x/3*Math.PI))*2/3;r+=(150*Math.sin(x/12*Math.PI)+300*Math.sin(x/30*Math.PI))*2/3;return r}
+  var dLat=tLat(lng-105,lat-35),dLng=tLng(lng-105,lat-35);
+  var rLat=lat/180*Math.PI,magic=Math.sin(rLat);
+  magic=1-ee*magic*magic;var sm=Math.sqrt(magic);
+  dLat=(dLat*180)/((a*(1-ee))/(magic*sm)*Math.PI);
+  dLng=(dLng*180)/(a/sm*Math.cos(rLat)*Math.PI);
+  return[lng+dLng,lat+dLat];
+}
+
 function ensureMap(){
-  if(mapInitialized){
-    var c=document.getElementById('map-container');
-    if(!c||!c._leaflet_id){
-      mapInitialized=false;
-      if(map){try{map.remove()}catch(e){}map=null}
-    }else{
-      if(map)map.invalidateSize();
-      return;
-    }
+  var c=document.getElementById('map-container');
+  if(!c)return;
+  if(map){
+    if(!c._tmap_ready){
+      try{map.destroy()}catch(e){}
+      map=null;markerLayer=null;infoWindow=null;mapInitialized=false;
+    }else{return}
   }
-  if(typeof L==='undefined'){
-    var c=document.getElementById('map-container');
-    if(c) c.innerHTML='<div class="map-fallback"><span>🗺️</span><p>地图加载失败</p><p style="font-size:11px">请检查网络连接</p></div>';
+  if(typeof TMap==='undefined'){
+    c.innerHTML='<div class="map-fallback"><span>🗺️</span><p>地图加载中...</p><p style="font-size:11px">如长时间无显示请检查网络</p></div>';
+    setTimeout(ensureMap,500);
     return;
   }
-  var c=document.getElementById('map-container');
-  if(!c) return;
-  map=L.map('map-container',{center:[35.86166,104.195397],zoom:4,zoomControl:true,attributionControl:false});
-  // Primary tile layer: Gaode (高德地图, reliable in China)
-  var tileLayer=L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{
-    subdomains:['1','2','3','4'],maxZoom:18
+  map=new TMap.Map(c,{center:new TMap.LatLng(35.86166,104.195397),zoom:4});
+  c._tmap_ready=true;
+  infoWindow=new TMap.InfoWindow({map:map,position:new TMap.LatLng(0,0),enableCustom:true,offset:{x:0,y:-42},content:''});
+  infoWindow.close();
+  rebuildMarkers();
+  map.on('click',function(e){
+    if(infoWindow)infoWindow.close();
+    var lat=e.latLng.getLat(),lng=e.latLng.getLng();
+    showAddFootprintModal({lat:lat,lng:lng});
   });
-  tileLayer.addTo(map);
-  // Auto-fallback to CartoDB if Gaode tiles fail
-  var errCount=0,switched=false;
-  tileLayer.on('tileerror',function(){
-    errCount++;
-    if(errCount>5&&!switched){
-      switched=true;
-      map.removeLayer(tileLayer);
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',{
-        subdomains:['a','b','c','d'],maxZoom:18
-      }).addTo(map);
-    }
-  });
-  state.footprints.forEach(function(fp){addFootprintMarker(fp)});
-  map.on('click',function(e){showAddFootprintModal(e.latlng)});
   mapInitialized=true;
-  setTimeout(function(){if(map)map.invalidateSize()},100);
+}
+
+function rebuildMarkers(){
+  if(!map)return;
+  if(markerLayer){try{markerLayer.setMap(null)}catch(e){}}
+  markerLayer=null;
+  if(!state.footprints.length)return;
+  var emojis=['🏛️','🏖️','🏔️','🌊','🌸','🏯','🌋','🌲','🌅','🎡','🍜','⛰️','📍'];
+  var styles={};
+  emojis.forEach(function(e){
+    styles[e]=new TMap.MarkerStyle({width:34,height:42,anchor:{x:17,y:42},
+      content:'<div style="width:34px;height:42px;display:flex;align-items:flex-end;justify-content:center"><div style="width:28px;height:28px;background:#fff;border-radius:50% 50% 50% 0;transform:rotate(-45deg);border:2.5px solid #43A047;display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(0,0,0,.25)"><span style="transform:rotate(45deg);font-size:16px">'+e+'</span></div></div>'});
+  });
+  var geometries=state.footprints.map(function(fp){
+    var lat=fp.coords?fp.coords.lat:fp.lat;
+    var lng=fp.coords?fp.coords.lng:fp.lng;
+    if(isNaN(lat)||isNaN(lng))return null;
+    return{id:fp.id,styleId:fp.emoji||'📍',position:new TMap.LatLng(lat,lng)};
+  }).filter(function(g){return g!==null});
+  if(!geometries.length)return;
+  markerLayer=new TMap.MultiMarker({map:map,styles:styles,geometries:geometries});
+  markerLayer.on('click',function(evt){
+    var fp=state.footprints.find(function(f){return f.id===evt.geometry.id});
+    if(!fp)return;
+    var lat=fp.coords?fp.coords.lat:fp.lat;
+    var lng=fp.coords?fp.coords.lng:fp.lng;
+    infoWindow.open();
+    infoWindow.setPosition(new TMap.LatLng(lat,lng));
+    infoWindow.setContent('<div class="tmap-infowindow"><strong>'+escapeHtml(fp.name)+'</strong><div class="popup-date">'+formatDate(fp.date)+(fp.desc?' · '+escapeHtml(fp.desc):'')+'</div></div>');
+  });
 }
 
 function addFootprintMarker(fp){
-  if(!map) return;
-  var lat=fp.coords?fp.coords.lat:fp.lat;
-  var lng=fp.coords?fp.coords.lng:fp.lng;
-  if(isNaN(lat)||isNaN(lng))return;
-  var icon=L.divIcon({className:'map-marker',html:'<div class="marker-pin"><span>'+(fp.emoji||'📍')+'</span></div>',iconSize:[34,34],iconAnchor:[17,34],popupAnchor:[0,-34]});
-  var m=L.marker([lat,lng],{icon:icon}).addTo(map);
-  m.bindPopup('<div class="marker-popup"><strong>'+escapeHtml(fp.name)+'</strong><div class="popup-date">'+formatDate(fp.date)+(fp.desc?' · '+escapeHtml(fp.desc):'')+'</div></div>');
-  fp._marker=m;
+  rebuildMarkers();
 }
 
 function showAddFootprintModal(latlng,prefillName){
@@ -1262,7 +1291,7 @@ function saveFootprint(){
   var lat=parseFloat(document.getElementById('fp-lat').value);
   var lng=parseFloat(document.getElementById('fp-lng').value);
   if(isNaN(lat)||isNaN(lng)){showToast('坐标无效，请搜索并选择地点','error');return}
-  var fp={id:genId('fp'),name:name,date:document.getElementById('fp-date').value||todayStr(),desc:document.getElementById('fp-desc').value.trim(),emoji:document.getElementById('fp-emoji').value,lat:lat,lng:lng,coords:{lat:lat,lng:lng}};
+  var fp={id:genId('fp'),name:name,date:document.getElementById('fp-date').value||todayStr(),desc:document.getElementById('fp-desc').value.trim(),emoji:document.getElementById('fp-emoji').value,lat:lat,lng:lng,coords:{lat:lat,lng:lng},cs:'gcj02'};
   state.footprints.push(fp);
   addFootprintMarker(fp);
   saveState();closeModal();showToast('📍 足迹已添加');renderHome();
@@ -1270,70 +1299,29 @@ function saveFootprint(){
 
 function deleteFootprint(id){
   confirmDialog('删除足迹','确定要删除这个足迹吗？此操作不可撤销。',function(){
-    var fp=state.footprints.find(function(f){return f.id===id});
-    if(fp&&fp._marker&&map) map.removeLayer(fp._marker);
     state.footprints=state.footprints.filter(function(f){return f.id!==id});
+    rebuildMarkers();
     saveState();showToast('已删除');renderHome();
   });
 }
 
-// ----- Address Search (Open-Meteo geocoding + Nominatim fallback) -----
+// ----- Address Search (Tencent Maps API) -----
 function searchPlaces(query,callback){
-  var results=[];
-  var done=false;
-  var timeout=setTimeout(function(){
-    if(!done){done=true;tryNominatim(query,function(nResults,nErr){
-      if(nResults&&nResults.length>0)callback(nResults,null);
-      else callback(null,'搜索超时，请重试');
-    })}
-  },8000);
-  // Try Open-Meteo geocoding first (reliable, already used for weather)
-  fetch('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(query)+'&count=5&language=zh&format=json')
+  fetch('https://apis.map.qq.com/ws/place/v1/suggestion?keyword='+encodeURIComponent(query)+'&key=CRRBZ-AQQY4-CKSUR-DQ7PL-ACUYZ-SGB7Y&page_size=8')
     .then(function(r){return r.json()})
     .then(function(data){
-      if(done)return;
-      if(data&&data.results&&data.results.length>0){
-        results=data.results.map(function(r){
-          var name=r.name||'未知';
-          var addrParts=[];
-          if(r.name)addrParts.push(r.name);
-          if(r.admin2&&r.admin2!==name)addrParts.push(r.admin2);
-          if(r.admin1&&r.admin1!==name)addrParts.push(r.admin1);
-          if(r.country)addrParts.push(r.country);
-          return{name:name,address:addrParts.join(', '),lat:r.latitude,lng:r.longitude};
+      if(data&&data.status===0&&data.data&&data.data.length>0){
+        var results=data.data.map(function(r){
+          return{name:r.title||'未知',address:r.address||'',lat:r.location.lat,lng:r.location.lng};
         });
-        done=true;clearTimeout(timeout);callback(results,null);
+        callback(results,null);
       }else{
-        // No Open-Meteo results, try Nominatim
-        tryNominatim(query,function(nResults,nErr){
-          if(done)return;
-          done=true;clearTimeout(timeout);
-          callback(nResults,nErr);
-        });
+        callback(null,'未找到结果');
       }
     })
     .catch(function(){
-      if(done)return;
-      tryNominatim(query,function(nResults,nErr){
-        if(done)return;
-        done=true;clearTimeout(timeout);
-        callback(nResults,nErr);
-      });
+      callback(null,'搜索失败，请重试');
     });
-  function tryNominatim(q,cb){
-    fetch('https://nominatim.openstreetmap.org/search?q='+encodeURIComponent(q)+'&format=json&limit=5&addressdetails=1&accept-language=zh')
-      .then(function(r){return r.json()})
-      .then(function(data){
-        if(data&&data.length>0){
-          var nResults=data.map(function(r){
-            var name=r.name||(r.display_name?r.display_name.split(',')[0]:'未知');
-            return{name:name,address:r.display_name||'',lat:parseFloat(r.lat),lng:parseFloat(r.lon)};
-          });
-          cb(nResults,null);
-        }else{cb(null,'未找到结果')}
-      })
-      .catch(function(){cb(null,'搜索失败')});
-  }
 }
 
 function searchAddressOnMap(){
@@ -1361,7 +1349,7 @@ function selectMapSearchResult(el){
   if(resultsEl)resultsEl.classList.remove('show');
   var input=document.getElementById('map-search-input');
   if(input)input.value='';
-  if(map){map.setView([lat,lng],14)}
+  if(map){map.setCenter(new TMap.LatLng(lat,lng));map.setZoom(14)}
   showAddFootprintModal({lat:lat,lng:lng},name);
 }
 
@@ -1403,7 +1391,7 @@ function selectFootprintSearchResult(el){
     coordsEl.innerHTML='📍 坐标：'+parseFloat(lat).toFixed(4)+', '+parseFloat(lng).toFixed(4)+' <span style="color:var(--text-muted);margin-left:4px">✓ 已选择</span>';
   }
   // Pan map to selected location
-  if(map){try{map.setView([parseFloat(lat),parseFloat(lng)],14)}catch(e){}}
+  if(map){try{map.panTo(new TMap.LatLng(parseFloat(lat),parseFloat(lng)));map.setZoom(14)}catch(e){}}
   showToast('📍 已选择：'+name+'（坐标已保存）');
 }
 
@@ -3088,7 +3076,7 @@ function importData(event){
         state.wishlist=data.wishlist||[];
         state.settings=data.settings||{};
         initDefaultChecklists();saveState();showToast('📥 数据已导入');
-        if(mapInitialized&&map){map.remove();mapInitialized=false;map=null}
+        if(map){try{map.destroy()}catch(e){}map=null;markerLayer=null;infoWindow=null;mapInitialized=false}
         switchTab('home');
       });
     }catch(err){showToast('导入失败：文件格式错误','error')}
@@ -3101,7 +3089,7 @@ function clearAllData(){
   confirmDialog('清空数据','⚠️ 此操作将删除所有行程、小记、足迹和清单数据，且不可恢复！确定要继续吗？',function(){
     state.trips=[];state.notes={};state.footprints=[];state.wishlist=[];
     state.checklists={};initDefaultChecklists();saveState();
-    if(mapInitialized&&map){map.remove();mapInitialized=false;map=null}
+    if(map){try{map.destroy()}catch(e){}map=null;markerLayer=null;infoWindow=null;mapInitialized=false}
     showToast('所有数据已清空');switchTab('home');
   });
 }
@@ -3264,7 +3252,7 @@ async function syncFromGitHub() {
       saveState();
       updateSyncUI('synced');
       applyGlobalBg();
-      if (mapInitialized && map) { map.remove(); mapInitialized = false; map = null; }
+      if (map) { try{map.destroy()}catch(e){} map = null; markerLayer = null; infoWindow = null; mapInitialized = false; }
       switchTab('home');
       showToast('☁️ 数据已从 GitHub 恢复');
     });

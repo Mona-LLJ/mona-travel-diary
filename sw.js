@@ -1,15 +1,13 @@
 // Mona Travel Diary - Service Worker
 // Caches app shell for offline use
-const CACHE_NAME = 'mona-travel-diary-v14';
+const CACHE_NAME = 'mona-travel-diary-v15';
 const CACHE_URLS = [
   './',
   './index.html',
   './manifest.json',
   './icons/icon-192.png',
   './icons/icon-512.png',
-  './icons/icon-180.png',
-  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css',
-  'https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js'
+  './icons/icon-180.png'
 ];
 
 // Install: pre-cache app shell
@@ -45,8 +43,15 @@ self.addEventListener('fetch', function(event) {
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
 
-  // Skip API calls and map tiles - always use network
-  if (url.hostname === 'api.github.com' || url.hostname.includes('open-meteo') || url.hostname.includes('geocoding-api') || url.hostname.includes('nominatim') || url.hostname.includes('photon.komoot') || url.hostname.includes('geojs') || url.hostname.includes('get.geojs') || url.hostname.includes('tile.openstreetmap') || url.hostname.includes('autonavi') || url.hostname.includes('cartocdn')) {
+  // Skip API calls and map resources - always use network
+  if (url.hostname === 'api.github.com' ||
+      url.hostname.includes('open-meteo') ||
+      url.hostname.includes('geocoding-api') ||
+      url.hostname.includes('nominatim') ||
+      url.hostname.includes('geojs') ||
+      url.hostname.includes('get.geojs') ||
+      url.hostname.includes('map.qq.com') ||
+      url.hostname.includes('apis.map.qq.com')) {
     return;
   }
 
