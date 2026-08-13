@@ -1183,14 +1183,11 @@ function scrollToMap(){
 // ==================== MAP ====================
 function ensureMap(){
   if(mapInitialized){
-    // Check if the map container still exists in the DOM
     var c=document.getElementById('map-container');
     if(!c||!c._leaflet_id){
-      // Container was recreated (e.g. by renderHome), need to re-init
       mapInitialized=false;
       if(map){try{map.remove()}catch(e){}map=null}
     }else{
-      // Map still valid, just invalidate size
       if(map)map.invalidateSize();
       return;
     }
@@ -1203,12 +1200,27 @@ function ensureMap(){
   var c=document.getElementById('map-container');
   if(!c) return;
   map=L.map('map-container',{center:[35.86166,104.195397],zoom:4,zoomControl:true,attributionControl:false});
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{
-    subdomains:['a','b','c'],maxZoom:18
-  }).addTo(map);
+  // Primary tile layer: Gaode (高德地图, reliable in China)
+  var tileLayer=L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',{
+    subdomains:['1','2','3','4'],maxZoom:18
+  });
+  tileLayer.addTo(map);
+  // Auto-fallback to CartoDB if Gaode tiles fail
+  var errCount=0,switched=false;
+  tileLayer.on('tileerror',function(){
+    errCount++;
+    if(errCount>5&&!switched){
+      switched=true;
+      map.removeLayer(tileLayer);
+      L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',{
+        subdomains:['a','b','c','d'],maxZoom:18
+      }).addTo(map);
+    }
+  });
   state.footprints.forEach(function(fp){addFootprintMarker(fp)});
   map.on('click',function(e){showAddFootprintModal(e.latlng)});
   mapInitialized=true;
+  setTimeout(function(){if(map)map.invalidateSize()},100);
 }
 
 function addFootprintMarker(fp){

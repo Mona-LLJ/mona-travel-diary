@@ -1,6 +1,6 @@
 // Mona Travel Diary - Service Worker
 // Caches app shell for offline use
-const CACHE_NAME = 'mona-travel-diary-v13';
+const CACHE_NAME = 'mona-travel-diary-v14';
 const CACHE_URLS = [
   './',
   './index.html',
@@ -46,7 +46,7 @@ self.addEventListener('fetch', function(event) {
   if (event.request.method !== 'GET') return;
 
   // Skip API calls and map tiles - always use network
-  if (url.hostname === 'api.github.com' || url.hostname.includes('open-meteo') || url.hostname.includes('geocoding-api') || url.hostname.includes('nominatim') || url.hostname.includes('photon.komoot') || url.hostname.includes('geojs') || url.hostname.includes('get.geojs') || url.hostname.includes('tile.openstreetmap')) {
+  if (url.hostname === 'api.github.com' || url.hostname.includes('open-meteo') || url.hostname.includes('geocoding-api') || url.hostname.includes('nominatim') || url.hostname.includes('photon.komoot') || url.hostname.includes('geojs') || url.hostname.includes('get.geojs') || url.hostname.includes('tile.openstreetmap') || url.hostname.includes('autonavi') || url.hostname.includes('cartocdn')) {
     return;
   }
 
