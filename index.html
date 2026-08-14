@@ -2859,8 +2859,10 @@ function renderProfile(){
   html+='<div class="setting-item" onclick="clearAllData()"><span class="setting-icon">🗑</span><span class="setting-label">清空所有数据</span><span class="setting-arrow">›</span></div>';
   html+='</div>';
   html+='<input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)">';
+  // Force update button
+  html+='<div style="text-align:center;margin-top:12px"><button class="btn-text" style="font-size:12px;color:var(--text-muted)" onclick="forceUpdateApp()">🔄 检查更新</button></div>';
   // About
-  html+='<div class="about-section"><div class="app-name">🐱 Mona 旅行日记</div><div>Version 2.4.0</div><div style="margin-top:4px">用心记录每一段旅程</div><div style="margin-top:8px;opacity:.6">💚 Made with love</div></div>';
+  html+='<div class="about-section"><div class="app-name">🐱 Mona 旅行日记</div><div>Version 2.5.2</div><div style="margin-top:4px">用心记录每一段旅程</div><div style="margin-top:8px;opacity:.6">💚 Made with love</div></div>';
   document.getElementById('tab-profile').innerHTML=html;
 }
 
@@ -3092,6 +3094,29 @@ function clearAllData(){
     if(map){try{map.destroy()}catch(e){}map=null;markerLayer=null;infoWindow=null;mapInitialized=false}
     showToast('所有数据已清空');switchTab('home');
   });
+}
+
+// Force update: unregister SW, clear all caches, reload
+function forceUpdateApp(){
+  showToast('🔄 正在检查更新...', '', 3000);
+  if('serviceWorker' in navigator){
+    navigator.serviceWorker.getRegistrations().then(function(regs){
+      var promises = regs.map(function(reg){return reg.unregister()});
+      // Also clear all caches
+      if('caches' in window){
+        caches.keys().then(function(names){
+          names.forEach(function(n){caches.delete(n)});
+        });
+      }
+      Promise.all(promises).then(function(){
+        console.log('[SW] All service workers unregistered, caches cleared');
+        showToast('✅ 已更新，正在重新加载...', '', 2000);
+        setTimeout(function(){window.location.href = window.location.href.split('?')[0] + '?v=' + Date.now()}, 1000);
+      });
+    });
+  } else {
+    window.location.href = window.location.href.split('?')[0] + '?v=' + Date.now();
+  }
 }
 
 // ==================== GITHUB ENCRYPTED SYNC ====================
@@ -3561,12 +3586,25 @@ function init(){
   window.addEventListener('offline',function(){updateSyncStatus('offline');showToast('🟠 网络已断开')});
   // Update countdown daily
   setInterval(function(){if(currentView.tab==='home')renderHome()},60000);
-  // Register service worker for PWA
+  // Register service worker for PWA with auto-update
   if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').then(function(reg){
-      console.log('[SW] Registered successfully');
+      console.log('[SW] Registered successfully, scope:', reg.scope);
+      // Check for updates every 60 seconds
+      setInterval(function(){reg.update()}, 60000);
     }).catch(function(err){
       console.log('[SW] Registration failed:', err);
+    });
+    // Auto-reload when new SW takes control
+    navigator.serviceWorker.addEventListener('controllerchange', function(){
+      console.log('[SW] Controller changed — reloading to get new version');
+      window.location.reload();
+    });
+    // Listen for messages from SW (e.g. "reload" on activate)
+    navigator.serviceWorker.addEventListener('message', function(event){
+      if(event.data && event.data.type === 'SW_UPDATED'){
+        window.location.reload();
+      }
     });
   }
   // Check cloud for updates (multi-device sync) - delayed 2s after load

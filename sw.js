@@ -1,6 +1,6 @@
 // Mona Travel Diary - Service Worker
 // Caches app shell for offline use
-const CACHE_NAME = 'mona-travel-diary-v16';
+const CACHE_NAME = 'mona-travel-diary-v17';
 const CACHE_URLS = [
   './',
   './index.html',
@@ -23,7 +23,7 @@ self.addEventListener('install', function(event) {
   self.skipWaiting();
 });
 
-// Activate: clean old caches
+// Activate: clean old caches and notify clients to reload
 self.addEventListener('activate', function(event) {
   event.waitUntil(
     caches.keys().then(function(names) {
@@ -31,6 +31,13 @@ self.addEventListener('activate', function(event) {
         names.filter(function(n) { return n !== CACHE_NAME; })
           .map(function(n) { return caches.delete(n); })
       );
+    }).then(function() {
+      // Notify all clients that SW has been updated
+      return self.clients.matchAll({includeUncontrolled: true});
+    }).then(function(clients) {
+      clients.forEach(function(client) {
+        client.postMessage({type: 'SW_UPDATED', version: CACHE_NAME});
+      });
     })
   );
   self.clients.claim();
