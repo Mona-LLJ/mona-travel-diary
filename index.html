@@ -3271,34 +3271,56 @@ async function syncToGitHub() {
     // Serialize and encrypt data
     var dataStr = JSON.stringify(state);
     var encrypted = await encryptData(dataStr, cfg.password);
-    // encryptData already returns base64, use directly for GitHub API
-    var content = encrypted;
+    // Remove any whitespace/newlines from base64 — GitHub requires clean base64
+    var content = encrypted.replace(/\s/g, '');
 
-    // Check if file exists (get SHA for update)
-    var existing = null;
-    try {
-      existing = await ghApi(cfg.owner + '/' + cfg.repo + '/contents/' + cfg.path + '?ref=' + cfg.branch, 'GET', null, cfg.token);
-    } catch(e) { /* file may not exist yet, that's OK */ }
+    // Upload with retry: GET SHA → PUT → if 409, re-GET SHA → retry PUT
+    var maxRetries = 3;
+    var lastErr = null;
+    for (var attempt = 0; attempt < maxRetries; attempt++) {
+      // Step 1: Get current file SHA (if file exists)
+      var sha = null;
+      try {
+        var existing = await ghApi(cfg.owner + '/' + cfg.repo + '/contents/' + cfg.path + '?ref=' + cfg.branch, 'GET', null, cfg.token);
+        if (existing && existing.sha) sha = existing.sha;
+      } catch(getErr) {
+        console.warn('[Sync] GET SHA attempt ' + (attempt+1) + ' failed:', getErr.message);
+        // If GET fails on first attempt, proceed without SHA (try creating new file)
+        // On retry attempts, the GET failure means we can't update — will likely fail
+      }
 
-    var body = {
-      message: '🔄 Auto sync: ' + new Date().toISOString(),
-      content: content,
-      branch: cfg.branch
-    };
-    if (existing && existing.sha) body.sha = existing.sha;
+      // Step 2: PUT with SHA (if available)
+      var body = {
+        message: '🔄 Auto sync: ' + new Date().toISOString(),
+        content: content,
+        branch: cfg.branch
+      };
+      if (sha) body.sha = sha;
 
-    // PUT now throws on error (no longer swallows 404)
-    var result = await ghApi(cfg.owner + '/' + cfg.repo + '/contents/' + cfg.path, 'PUT', body, cfg.token);
-    if (!result) {
-      throw new Error('上传失败：服务器未返回结果');
+      try {
+        var result = await ghApi(cfg.owner + '/' + cfg.repo + '/contents/' + cfg.path, 'PUT', body, cfg.token);
+        if (result) {
+          state.settings.github.connected = true;
+          state.settings.github.lastCloudSync = new Date().toISOString();
+          state.settings.lastSync = new Date().toISOString();
+          saveState(true);
+          updateSyncUI('synced');
+          showToast('☁️ 数据已同步到 GitHub');
+          return;
+        }
+      } catch(putErr) {
+        lastErr = putErr;
+        console.warn('[Sync] PUT attempt ' + (attempt+1) + ' failed:', putErr.message);
+        // If 409 (SHA mismatch) or 422 (missing SHA), retry with fresh GET
+        if (putErr.message.indexOf('409') >= 0 || putErr.message.indexOf('422') >= 0) {
+          continue; // retry
+        }
+        // Other errors (401, 403, 404) — don't retry
+        throw putErr;
+      }
     }
-
-    state.settings.github.connected = true;
-    state.settings.github.lastCloudSync = new Date().toISOString();
-    state.settings.lastSync = new Date().toISOString();
-    saveState(true);
-    updateSyncUI('synced');
-    showToast('☁️ 数据已同步到 GitHub');
+    // All retries exhausted
+    throw lastErr || new Error('上传失败：重试 ' + maxRetries + ' 次后仍失败');
   } catch(err) {
     console.error('Sync error:', err);
     state.settings.github.connected = false;
