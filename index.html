@@ -2862,7 +2862,7 @@ function renderProfile(){
   // Force update button
   html+='<div style="text-align:center;margin-top:12px"><button class="btn-text" style="font-size:12px;color:var(--text-muted)" onclick="forceUpdateApp()">🔄 检查更新</button></div>';
   // About
-  html+='<div class="about-section"><div class="app-name">🐱 Mona 旅行日记</div><div>Version 2.5.3</div><div style="margin-top:4px">用心记录每一段旅程</div><div style="margin-top:8px;opacity:.6">💚 Made with love</div></div>';
+  html+='<div class="about-section"><div class="app-name">🐱 Mona 旅行日记</div><div>Version 2.5.4</div><div style="margin-top:4px">用心记录每一段旅程</div><div style="margin-top:8px;opacity:.6">💚 Made with love</div></div>';
   document.getElementById('tab-profile').innerHTML=html;
 }
 
@@ -3186,7 +3186,7 @@ function ghApi(path, method, body, token) {
       if (r.status === 404) {
         msg += ' — 仓库不存在或 Token 无权限访问，请检查用户名、仓库名和 Token 是否正确';
       } else if (r.status === 401) {
-        msg += ' — Token 无效或已过期，请重新生成 Personal Access Token';
+        msg += ' — Token 无效或已过期（当前保存 Token 尾号: '+(token?token.slice(-4):'空')+'）。请重新生成，或打开 '+location.origin+location.pathname+'?token=新Token 一键导入';
       } else if (r.status === 403) {
         msg += ' — 权限不足，请确保 Token 勾选了 repo 权限';
       } else if (r.status === 422) {
@@ -3216,7 +3216,7 @@ async function testGitHubConnection() {
     var userResp = await fetch('https://api.github.com/user', {
       headers: {'Authorization':'token '+cfg.token, 'Accept':'application/vnd.github.v3+json'}
     });
-    if (userResp.status === 401) return {ok:false, msg:'Token 无效或已过期，请重新生成'};
+    if (userResp.status === 401) return {ok:false, msg:'Token 无效或已过期（当前保存 Token 尾号: '+(cfg.token?cfg.token.slice(-4):'空')+'）。请重新生成，或打开 '+location.origin+location.pathname+'?token=新Token 一键导入'};
     if (!userResp.ok) return {ok:false, msg:'Token 验证失败 ('+userResp.status+')'};
     var userData = await userResp.json();
 
@@ -3417,7 +3417,15 @@ function showGitHubSettings() {
   // Form
   html += '<div class="github-form-group"><label>GitHub 用户名</label><input type="text" id="gh-owner" placeholder="你的 GitHub 用户名" value="'+escapeHtml(cfg.owner)+'"><div class="hint">你的 GitHub 账号用户名（不是邮箱）</div></div>';
 
-  html += '<div class="github-form-group"><label>Personal Access Token</label><input type="password" id="gh-token" placeholder="ghp_xxxxxxxxxxxx" value="'+escapeHtml(cfg.token)+'"><div class="hint">需要 repo 权限。Token 仅存储在本设备，不会上传到任何服务器。<br>👉 生成方式: GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token → 勾选 repo</div></div>';
+  html += '<div class="github-form-group"><label>Personal Access Token</label><input type="password" id="gh-token" placeholder="ghp_xxxxxxxxxxxx" value="'+escapeHtml(cfg.token)+'" autocomplete="off" autocapitalize="off" spellcheck="false">';
+  if(cfg.token){
+    html += '<div class="hint" style="color:var(--primary-mid)">📌 当前设备已保存 Token 尾号: <strong>'+escapeHtml(cfg.token.slice(-4))+'</strong>（若与正确 Token 不符，请粘贴新 Token 覆盖，或直接用下方一键导入）</div>';
+  }else{
+    html += '<div class="hint" style="color:#c0392b">⚠️ 尚未保存 Token</div>';
+  }
+  html += '<div class="hint">需要 repo 权限。Token 仅存储在本设备，不会上传到任何服务器。<br>👉 生成方式: GitHub → Settings → Developer settings → Personal access tokens → Tokens (classic) → Generate new token → 勾选 repo</div></div>';
+
+  html += '<div class="sync-info-box" style="margin-top:4px"><strong>🚀 换 Token 一键导入</strong><br>在浏览器地址栏打开（一次性自动保存并清除链接，无需手动输入）:<br><code style="word-break:break-all;font-size:11px">'+(location.origin+location.pathname)+'?token=你的Token</code><br><span style="opacity:.75">⚠️ iOS 上「主屏幕 PWA」与「Safari 浏览器」的数据互不相通，两边都要导入一次。</span></div>';
 
   html += '<div class="github-form-group"><label>仓库名称</label><input type="text" id="gh-repo" placeholder="literate-palm-tree" value="'+escapeHtml(cfg.repo)+'"><div class="hint">建议创建为 <strong>私有仓库(Private)</strong>，确保数据私密性</div></div>';
 
@@ -3599,8 +3607,29 @@ function applyTheme(){
   if(meta)meta.setAttribute('content',theme.primary);
 }
 
+// One-tap token import via URL: https://site/?token=ghp_xxx  or  #token=ghp_xxx
+// Solves: manual paste errors, iOS autofill interference, and PWA/Safari storage isolation
+function importTokenFromURL(){
+  var href = location.href, m = href.match(/[?&#]token=([^&#]+)/), token = null;
+  if(m) token = decodeURIComponent(m[1]);
+  if(!token) return false;
+  token = token.trim();
+  if(!/^gh[pous]_/.test(token)){
+    showToast('⚠️ 导入链接中的 Token 格式不正确，请检查后重试','error',6000);
+    try{ history.replaceState(null,'',href.replace(/[?&#]token=[^&#]*/,'')); }catch(e){}
+    return true;
+  }
+  var gh = state.settings.github;
+  gh.token = token; gh.connected = true;
+  saveState();
+  try{ history.replaceState(null,'',href.replace(/[?&#]token=[^&#]*/,'')); }catch(e){}
+  showToast('✅ Token 已导入（尾号 '+token.slice(-4)+'），请到设置里点「测试连接」验证','',5000);
+  return true;
+}
+
 function init(){
   loadState();
+  importTokenFromURL();
   applyTheme();
   applyGlobalBg();
   switchTab('home');
